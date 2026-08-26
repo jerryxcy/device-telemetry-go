@@ -1,0 +1,12 @@
+# 預設排除整個 build context,再放行建置真正需要的東西。
+# Dockerfile 只做 `go build ./cmd/${SERVICE}`,所以需要的就是 module 檔 + 原始碼。
+# 之後若新增頂層原始碼目錄(例如 pkg/),記得在這裡加一行 !pkg。
+*
+
+!go.mod
+!go.sum
+!cmd
+!internal
+
+# 測試檔不參與建置,排除掉可避免改測試就讓 COPY 那層 cache 失效。
+**/*_test.go

@@ -1,5 +1,34 @@
+# 編譯產物
 bin/
+dist/
 *.exe
-.env
-.DS_Store
+*.so
+*.dylib
+# go build ./cmd/<name> 會把 binary 丟在 repo 根目錄
+/device-service
+/telemetry-service
+/healthcheck
+
+# 測試與效能分析
+*.test
 coverage.out
+coverage.html
+*.prof
+
+# 環境變數(.env.example 若之後要進版控會保留)
+.env
+.env.*
+!.env.example
+
+# Go 工作區(本機多模組開發用)
+go.work
+go.work.sum
+
+# 編輯器 / IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
