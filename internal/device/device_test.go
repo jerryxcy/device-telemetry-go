@@ -6,44 +6,108 @@ import (
 )
 
 // Table-driven test 是 Go 最有代表性的測試風格,面試常聊。
-// 這裡先給你骨架,實作 Validate 之後把 want 改成真的預期。
-func TestDevice_Validate(t *testing.T) {
+// 這裡先給你骨架,實作之後把 t.Skip 那行刪掉。
+
+func TestLifecycle_Valid(t *testing.T) {
+	tests := []struct {
+		name      string
+		lifecycle Lifecycle
+		want      bool
+	}{
+		{"enabled", LifecycleEnabled, true},
+		{"disabled", LifecycleDisabled, true},
+		{"retired", LifecycleRetired, true},
+		{"empty", Lifecycle(""), false},
+		{"garbage", Lifecycle("exploded"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Skip("TODO(day1): 實作 Lifecycle.Valid 後把這行刪掉")
+
+			if got := tt.lifecycle.Valid(); got != tt.want {
+				t.Fatalf("Valid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRegisterInput_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
-		device  Device
+		input   RegisterInput
 		wantErr error // nil 表示應該通過
 	}{
 		{
-			name:    "valid device",
-			device:  Device{Name: "sensor-01", Status: StatusActive},
+			name:    "valid",
+			input:   RegisterInput{Serial: "SN-0001", Name: "一樓溫度計"},
 			wantErr: nil,
 		},
 		{
-			name:    "empty name",
-			device:  Device{Name: "", Status: StatusActive},
+			name:    "empty serial",
+			input:   RegisterInput{Serial: "", Name: "一樓溫度計"},
 			wantErr: ErrInvalidInput,
 		},
 		{
-			name:    "bad status",
-			device:  Device{Name: "sensor-01", Status: Status("exploded")},
+			name:    "empty name",
+			input:   RegisterInput{Serial: "SN-0001", Name: ""},
 			wantErr: ErrInvalidInput,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Skip("TODO(day1): 實作 Device.Validate 後把這行刪掉")
+			t.Skip("TODO(day1): 實作 RegisterInput.Validate 後把這行刪掉")
 
-			err := tt.device.Validate()
-			if tt.wantErr == nil {
-				if err != nil {
-					t.Fatalf("expected no error, got %v", err)
-				}
-				return
-			}
-			if !errors.Is(err, tt.wantErr) {
-				t.Fatalf("expected %v, got %v", tt.wantErr, err)
-			}
+			assertErrIs(t, tt.input.Validate(), tt.wantErr)
 		})
+	}
+}
+
+func TestUpdateInput_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   UpdateInput
+		wantErr error
+	}{
+		{
+			name:    "valid",
+			input:   UpdateInput{Name: "一樓溫度計", Lifecycle: LifecycleDisabled},
+			wantErr: nil,
+		},
+		{
+			// 退役要走 DELETE,不是 PUT。這條規則在 Validate 就擋掉。
+			name:    "cannot retire via update",
+			input:   UpdateInput{Name: "一樓溫度計", Lifecycle: LifecycleRetired},
+			wantErr: ErrInvalidInput,
+		},
+		{
+			name:    "bad lifecycle",
+			input:   UpdateInput{Name: "一樓溫度計", Lifecycle: Lifecycle("exploded")},
+			wantErr: ErrInvalidInput,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Skip("TODO(day1): 實作 UpdateInput.Validate 後把這行刪掉")
+
+			assertErrIs(t, tt.input.Validate(), tt.wantErr)
+		})
+	}
+}
+
+// assertErrIs 是測試輔助函式。t.Helper() 讓失敗訊息指向呼叫端的行號,
+// 而不是這裡 —— 寫測試輔助函式時幾乎一定要加。
+func assertErrIs(t *testing.T, got, want error) {
+	t.Helper()
+	if want == nil {
+		if got != nil {
+			t.Fatalf("expected no error, got %v", got)
+		}
+		return
+	}
+	if !errors.Is(got, want) {
+		t.Fatalf("expected %v, got %v", want, got)
 	}
 }

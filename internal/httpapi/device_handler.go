@@ -5,20 +5,21 @@ import "net/http"
 // TODO(day1): 五個 handler 自己實作。
 //
 // 每支的固定套路:
-//   1. 從 r.PathValue("id") 取路徑參數(Go 1.22+ 內建,不需要第三方套件)
-//   2. 用 json.NewDecoder(r.Body).Decode(&req) 解請求;請自己定義 request struct,
-//      不要直接把 device.Device 當輸入 —— 否則 client 可以偽造 ID 和 CreatedAt
+//   1. 路徑參數用 r.PathValue("serial") 取(Go 1.22+ 內建)
+//   2. 請求主體用 json.NewDecoder(r.Body).Decode(&in) 解到 device.RegisterInput
+//      或 device.UpdateInput —— 那兩個型別就是為了這裡而存在的
 //   3. 呼叫 h.svc.XXX(r.Context(), ...)
-//   4. 成功用 writeJSON,失敗一律丟給 writeError(它已經寫好錯誤對應了)
+//   4. 成功用 writeJSON,失敗一律丟給 writeError(錯誤對應已經寫好了)
 //
-// 寫完記得問自己:handler 裡有沒有出現任何業務規則?有的話該搬去 service 層。
+// 寫完問自己:handler 裡有沒有出現任何業務規則?有的話該搬去 service 層。
 
-func (h *Handler) createDevice(w http.ResponseWriter, r *http.Request) {
+// registerDevice 對應 POST /devices。冪等,所以重複註冊回 200 而不是 409。
+func (h *Handler) registerDevice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusNotImplemented, errorBody{Error: "not implemented"})
 }
 
+// listDevices 提示:limit/offset 從 r.URL.Query() 取,記得處理解析失敗與預設值。
 func (h *Handler) listDevices(w http.ResponseWriter, r *http.Request) {
-	// 提示:limit/offset 從 r.URL.Query() 取,記得處理解析失敗與預設值
 	writeJSON(w, http.StatusNotImplemented, errorBody{Error: "not implemented"})
 }
 
@@ -26,10 +27,13 @@ func (h *Handler) getDevice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusNotImplemented, errorBody{Error: "not implemented"})
 }
 
+// updateDevice 對應 PUT /devices/{serial}。整份取代 Name / Location / Lifecycle。
 func (h *Handler) updateDevice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusNotImplemented, errorBody{Error: "not implemented"})
 }
 
-func (h *Handler) deleteDevice(w http.ResponseWriter, r *http.Request) {
+// retireDevice 對應 DELETE /devices/{serial}。語意是退役,不是刪除。
+// 冪等,所以成功一律 204,不管它本來是不是已經退役了。
+func (h *Handler) retireDevice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusNotImplemented, errorBody{Error: "not implemented"})
 }

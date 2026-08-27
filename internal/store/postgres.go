@@ -19,19 +19,20 @@ func NewDeviceStore(pool *pgxpool.Pool) *DeviceStore {
 	return &DeviceStore{pool: pool}
 }
 
-// TODO(day1): 實作以下方法。
+// TODO(day1): 實作以下四個方法。
 //
 // 重點:
-//   1. GetByID 查不到時,把 pgx.ErrNoRows 轉成 device.ErrNotFound ——
-//      不要讓 pgx 的錯誤型別洩漏到上層,那會讓 service 層依賴資料庫套件
-//   2. Create 撞到 unique constraint 時轉成 device.ErrAlreadyExists
-//   3. 每個 query 都要吃 ctx,pgx 會在 ctx 取消時中斷查詢
+//  1. GetBySerial 查不到時,把 pgx.ErrNoRows 轉成 device.ErrNotFound ——
+//     不要讓 pgx 的錯誤型別洩漏到上層,那會讓 service 層依賴資料庫套件
+//  2. Create 撞到主鍵衝突時轉成 device.ErrAlreadyExists。
+//     判斷方式:errors.As 取出 *pgconn.PgError,檢查 Code == "23505"
+//  3. 每個 query 都要吃 ctx,pgx 會在 ctx 取消時中斷查詢
 
 func (s *DeviceStore) Create(ctx context.Context, d *device.Device) error {
 	panic("not implemented")
 }
 
-func (s *DeviceStore) GetByID(ctx context.Context, id string) (*device.Device, error) {
+func (s *DeviceStore) GetBySerial(ctx context.Context, serial string) (*device.Device, error) {
 	panic("not implemented")
 }
 
@@ -40,9 +41,5 @@ func (s *DeviceStore) List(ctx context.Context, limit, offset int) ([]*device.De
 }
 
 func (s *DeviceStore) Update(ctx context.Context, d *device.Device) error {
-	panic("not implemented")
-}
-
-func (s *DeviceStore) Delete(ctx context.Context, id string) error {
 	panic("not implemented")
 }

@@ -33,10 +33,13 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, device.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, errorBody{Error: err.Error()})
-	case errors.Is(err, device.ErrAlreadyExists):
+	case errors.Is(err, device.ErrRetired):
+		// Retired 是終點狀態,對它做任何變更都是衝突。
 		writeJSON(w, http.StatusConflict, errorBody{Error: err.Error()})
 	case errors.Is(err, device.ErrInvalidInput):
 		writeJSON(w, http.StatusBadRequest, errorBody{Error: err.Error()})
+	// device.ErrAlreadyExists 刻意沒有對應:註冊是冪等的,Service 會自己
+	// 把它轉成「回傳現有那筆」。如果它真的冒到這裡,那是 bug,該走 500。
 	default:
 		// 未預期的錯誤:記完整內容到 log,但只回籠統訊息給 client,
 		// 不要把 SQL 錯誤洩漏出去。
