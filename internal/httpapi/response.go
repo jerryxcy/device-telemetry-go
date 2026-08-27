@@ -33,9 +33,6 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, device.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, errorBody{Error: err.Error()})
-	case errors.Is(err, device.ErrRetired):
-		// Retired 是終點狀態,對它做任何變更都是衝突。
-		writeJSON(w, http.StatusConflict, errorBody{Error: err.Error()})
 	case errors.Is(err, device.ErrInvalidInput):
 		writeJSON(w, http.StatusBadRequest, errorBody{Error: err.Error()})
 	// device.ErrAlreadyExists 刻意沒有對應:註冊是冪等的,Service 會自己

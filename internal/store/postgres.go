@@ -19,7 +19,7 @@ func NewDeviceStore(pool *pgxpool.Pool) *DeviceStore {
 	return &DeviceStore{pool: pool}
 }
 
-// TODO(day1): 實作以下四個方法。
+// TODO(day1): 實作以下五個方法。
 //
 // 重點:
 //  1. GetBySerial 查不到時,把 pgx.ErrNoRows 轉成 device.ErrNotFound ——
@@ -41,5 +41,25 @@ func (s *DeviceStore) List(ctx context.Context, limit, offset int) ([]*device.De
 }
 
 func (s *DeviceStore) Update(ctx context.Context, d *device.Device) error {
+	panic("not implemented")
+}
+
+// Delete 刪除設備及其讀數。這是本專案唯一需要交易的操作。
+//
+// TODO(day1): 自己實作。骨架長這樣:
+//
+//	tx, err := s.pool.Begin(ctx)
+//	if err != nil { ... }
+//	defer tx.Rollback(ctx)   // Commit 之後再 Rollback 是無害的 no-op,
+//	                         // 所以這行一定要寫,它負責所有提早 return 的路徑
+//
+//	// 先刪子表:readings 有 FK 指向 devices,順序反了會撞 FK 錯誤
+//	tx.Exec(ctx, `DELETE FROM readings WHERE serial = $1`, serial)
+//	tx.Exec(ctx, `DELETE FROM devices  WHERE serial = $1`, serial)
+//
+//	return tx.Commit(ctx)
+//
+// 為什麼不用 ON DELETE CASCADE:見 docs/adr/0003。
+func (s *DeviceStore) Delete(ctx context.Context, serial string) error {
 	panic("not implemented")
 }

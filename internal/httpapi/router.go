@@ -25,8 +25,7 @@ func NewHandler(svc *device.Service, db Pinger) *Handler {
 // Routes 已完成。注意 Go 1.22 之後 ServeMux 直接支援 method 與路徑參數,
 // 一般 CRUD 完全不需要 gin/chi 這類第三方 router。
 //
-// 五支標準 CRUD,路徑裡零個動詞。唯一的特例是 DELETE 的語意是退役而非刪除,
-// 理由見 docs/adr/0003。
+// 五支標準 CRUD,路徑裡零個動詞,每個動詞都是字面上的意思。
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 
@@ -37,7 +36,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /devices", h.listDevices)
 	mux.HandleFunc("GET /devices/{serial}", h.getDevice)
 	mux.HandleFunc("PUT /devices/{serial}", h.updateDevice)
-	mux.HandleFunc("DELETE /devices/{serial}", h.retireDevice)
+	mux.HandleFunc("DELETE /devices/{serial}", h.deleteDevice)
 
 	return Chain(mux, RequestID, Logging)
 }

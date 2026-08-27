@@ -2,7 +2,7 @@
 
 設備遙測平台 — 以 Go 實作的微服務練習專案。
 
-`device-service` 管理設備的身分與服役狀態,`telemetry-service` 接收設備上報的讀數,
+`device-service` 管理設備的身分與服役狀態,`telemetry-service` 接收設備上報的 Reading,
 並向 `device-service` 驗證這台設備是否有資格上報。重點不在功能多寡,而在服務間通訊、
 錯誤處理,以及重送情境下的寫入冪等性。
 
@@ -34,20 +34,11 @@
 
 設備以**出廠序號**作為身分,而非平台產生的 UUID([ADR-0001](./docs/adr/0001-serial-as-natural-key.md))。
 
-Lifecycle 三值互斥,「已退役又啟用中」在型別上無法表示:
+`enabled` 只有開與關兩個狀態,所以是 `bool` 而不是 enum —— 非法值在型別上就不存在,
+不需要任何驗證函式去擋。除役的設備維持 Disabled 即可,不需要第三種狀態。
 
-```
-  register
-     │
-     ▼
-  Enabled  ⇄  Disabled        送修、維護、暫時下線 → 這一層
-     │           │
-     └─────┬─────┘
-           ▼
-        Retired                永久除役,終點,不可回復
-```
-
-平台不刪除設備,只有退役,歷史讀數全數保留([ADR-0003](./docs/adr/0003-retire-instead-of-delete.md))。
+刪除設備會連同它的讀數一起刪除,由應用層在交易裡完成而非 `ON DELETE CASCADE`
+([ADR-0003](./docs/adr/0003-application-level-delete.md))。
 
 ### 冪等性
 
@@ -72,11 +63,10 @@ Lifecycle 三值互斥,「已退役又啟用中」在型別上無法表示:
 | `POST` | `/devices` | 註冊設備,**冪等** |
 | `GET` | `/devices` | 列出設備(`?limit=&offset=`) |
 | `GET` | `/devices/{serial}` | 取得單一設備 |
-| `PUT` | `/devices/{serial}` | 更新 `name` / `location` / `lifecycle` |
-| `DELETE` | `/devices/{serial}` | **退役**(非刪除),冪等 |
+| `PUT` | `/devices/{serial}` | 更新 `name` / `location` / `enabled` |
+| `DELETE` | `/devices/{serial}` | 刪除設備與其讀數,冪等 |
 
-`PUT` 的 `lifecycle` 只接受 `enabled` / `disabled`;要退役請用 `DELETE`。
-對已退役的設備做 `PUT` 一律回 `409`。
+每個動詞都是字面上的意思,路徑裡沒有動詞。
 
 ## 開發
 
@@ -108,10 +98,10 @@ make db-reset
 
 **Day 1 — device-service**
 
-- [ ] `Lifecycle.Valid()`
 - [ ] `RegisterInput.Validate()` / `UpdateInput.Validate()`
-- [ ] `device.Service` 五個方法(`Register` 要冪等,`Retire` 也要)
-- [ ] `store.DeviceStore` 四個方法(`pgx.ErrNoRows` → `ErrNotFound`,`23505` → `ErrAlreadyExists`)
+- [ ] `device.Service` 五個方法(`Register` 與 `Delete` 都要冪等)
+- [ ] `store.DeviceStore` 五個方法(`pgx.ErrNoRows` → `ErrNotFound`,`23505` → `ErrAlreadyExists`)
+- [ ] `DeviceStore.Delete` 的交易處理 —— 本專案唯一需要 `Begin`/`Commit`/`Rollback` 的地方
 - [ ] `httpapi` 五個 handler
 - [ ] `httpapi.Logging` middleware(需要包一層 ResponseWriter 才拿得到 status code)
 - [ ] `device_test.go` 的 table-driven test 跑綠
@@ -120,6 +110,6 @@ make db-reset
 
 - [ ] proto 定義與 gRPC server(批次上報,逐筆回結果)
 - [ ] 透過 gRPC 向 device-service 查詢上報資格
-- [ ] 上報准入:未註冊 / Disabled / Retired / 時鐘超出區間,四種可區分的拒絕
+- [ ] 上報准入:未註冊 / Disabled / 時鐘超出區間,三種可區分的拒絕
 - [ ] 讀數寫入與冪等處理
 - [ ] repository 層整合測試(testcontainers)

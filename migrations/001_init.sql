@@ -7,15 +7,15 @@ CREATE TABLE IF NOT EXISTS devices (
     -- Name 只是給人看的標籤,不唯一 —— 兩台設備可以同名。
     name        TEXT        NOT NULL,
     location    TEXT        NOT NULL DEFAULT '',
-    -- 三值互斥,「已退役又啟用中」在型別上就無法表示。
-    lifecycle   TEXT        NOT NULL CHECK (lifecycle IN ('enabled', 'disabled', 'retired')),
+    -- 平台要不要收這台設備的讀數。兩個狀態,所以是 bool 不是 enum。
+    enabled     BOOLEAN     NOT NULL DEFAULT TRUE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Day 2 才會用到。
 CREATE TABLE IF NOT EXISTS readings (
-    -- 沒有 ON DELETE CASCADE,因為 Device 根本不會被刪除。見 docs/adr/0003。
+    -- 刻意沒有 ON DELETE CASCADE:刪除由應用層在交易裡負責。見 docs/adr/0003。
     serial      TEXT             NOT NULL REFERENCES devices(serial),
     -- 設備自己的時鐘。這是去重的依據,所以必須由設備提出。見 docs/adr/0002。
     recorded_at TIMESTAMPTZ      NOT NULL,

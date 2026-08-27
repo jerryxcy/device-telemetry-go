@@ -19,35 +19,19 @@ var (
 	// 這個錯誤永遠不該冒到 HTTP 層。
 	ErrAlreadyExists = errors.New("device already exists")
 
-	// ErrRetired 表示操作對象已退役。Retired 是終點狀態,不可再變更。
-	ErrRetired = errors.New("device is retired")
-
-	// ErrDisabled 供 Day 2 的上報准入使用:設備仍在服役,但平台暫時不收它的讀數。
+	// ErrDisabled 供 Day 2 的上報准入使用:設備存在,但平台不收它的讀數。
 	ErrDisabled = errors.New("device is disabled")
 )
 
-// Lifecycle 是設備的服役狀態,三值互斥。
-type Lifecycle string
-
-const (
-	LifecycleEnabled  Lifecycle = "enabled"
-	LifecycleDisabled Lifecycle = "disabled"
-	LifecycleRetired  Lifecycle = "retired"
-)
-
-// Valid 回報是否為三個合法值之一。
-//
-// TODO(day1): 自己實作。
-func (l Lifecycle) Valid() bool {
-	return false
-}
-
 // Device 是核心 domain 型別。
+//
+// Enabled 只有兩個狀態,所以是 bool 而非 enum —— 非法值在型別上不存在,
+// 不需要任何驗證函式去擋。
 type Device struct {
 	Serial    string    `json:"serial"`
 	Name      string    `json:"name"`
 	Location  string    `json:"location"`
-	Lifecycle Lifecycle `json:"lifecycle"`
+	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -55,7 +39,7 @@ type Device struct {
 // RegisterInput 是註冊時外界能提供的全部欄位。
 //
 // 刻意不直接拿 Device 當輸入:否則呼叫端可以偽造 CreatedAt,
-// 或是在註冊時就把自己設成 retired。
+// 或在註冊當下就把自己設成 enabled=false。
 type RegisterInput struct {
 	Serial   string `json:"serial"`
 	Name     string `json:"name"`
@@ -77,18 +61,15 @@ func (in RegisterInput) Validate() error {
 //
 // 注意沒有 Serial —— 那是身分,不能改。
 type UpdateInput struct {
-	Name      string    `json:"name"`
-	Location  string    `json:"location"`
-	Lifecycle Lifecycle `json:"lifecycle"`
+	Name     string `json:"name"`
+	Location string `json:"location"`
+	Enabled  bool   `json:"enabled"`
 }
 
 // Validate 檢查更新輸入。
 //
-// TODO(day1): 自己實作。
+// TODO(day1): 自己實作。Enabled 是 bool,沒有非法值,所以這裡只需要檢查
 //   - Name 不可為空,長度上限 128
-//   - Lifecycle 必須 Valid()
-//   - Lifecycle 不可為 LifecycleRetired —— 退役要走 DELETE,不是 PUT。
-//     這條規則在這裡擋掉,handler 就不用管
 func (in UpdateInput) Validate() error {
 	return nil
 }

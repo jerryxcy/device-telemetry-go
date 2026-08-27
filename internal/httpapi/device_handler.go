@@ -27,13 +27,13 @@ func (h *Handler) getDevice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusNotImplemented, errorBody{Error: "not implemented"})
 }
 
-// updateDevice 對應 PUT /devices/{serial}。整份取代 Name / Location / Lifecycle。
+// updateDevice 對應 PUT /devices/{serial}。整份取代 Name / Location / Enabled。
 func (h *Handler) updateDevice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusNotImplemented, errorBody{Error: "not implemented"})
 }
 
-// retireDevice 對應 DELETE /devices/{serial}。語意是退役,不是刪除。
-// 冪等,所以成功一律 204,不管它本來是不是已經退役了。
-func (h *Handler) retireDevice(w http.ResponseWriter, r *http.Request) {
+// deleteDevice 對應 DELETE /devices/{serial}。連同該設備的讀數一起刪除。
+// 冪等,所以成功一律 204,不管那台設備本來存不存在。
+func (h *Handler) deleteDevice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusNotImplemented, errorBody{Error: "not implemented"})
 }

@@ -8,30 +8,6 @@ import (
 // Table-driven test 是 Go 最有代表性的測試風格,面試常聊。
 // 這裡先給你骨架,實作之後把 t.Skip 那行刪掉。
 
-func TestLifecycle_Valid(t *testing.T) {
-	tests := []struct {
-		name      string
-		lifecycle Lifecycle
-		want      bool
-	}{
-		{"enabled", LifecycleEnabled, true},
-		{"disabled", LifecycleDisabled, true},
-		{"retired", LifecycleRetired, true},
-		{"empty", Lifecycle(""), false},
-		{"garbage", Lifecycle("exploded"), false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Skip("TODO(day1): 實作 Lifecycle.Valid 後把這行刪掉")
-
-			if got := tt.lifecycle.Valid(); got != tt.want {
-				t.Fatalf("Valid() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestRegisterInput_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -72,18 +48,17 @@ func TestUpdateInput_Validate(t *testing.T) {
 	}{
 		{
 			name:    "valid",
-			input:   UpdateInput{Name: "一樓溫度計", Lifecycle: LifecycleDisabled},
+			input:   UpdateInput{Name: "一樓溫度計", Enabled: true},
 			wantErr: nil,
 		},
 		{
-			// 退役要走 DELETE,不是 PUT。這條規則在 Validate 就擋掉。
-			name:    "cannot retire via update",
-			input:   UpdateInput{Name: "一樓溫度計", Lifecycle: LifecycleRetired},
-			wantErr: ErrInvalidInput,
+			name:    "disabled is just as valid",
+			input:   UpdateInput{Name: "一樓溫度計", Enabled: false},
+			wantErr: nil,
 		},
 		{
-			name:    "bad lifecycle",
-			input:   UpdateInput{Name: "一樓溫度計", Lifecycle: Lifecycle("exploded")},
+			name:    "empty name",
+			input:   UpdateInput{Name: "", Enabled: true},
 			wantErr: ErrInvalidInput,
 		},
 	}
