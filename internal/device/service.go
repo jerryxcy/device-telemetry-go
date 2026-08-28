@@ -1,6 +1,17 @@
 package device
 
-import "context"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+)
+
+// 分頁邊界。定在 service 層,因為「一次吐幾筆」是業務決策,不是儲存細節。
+const (
+	defaultListLimit = 50
+	maxListLimit     = 200
+)
 
 // Repository 是 device service 對儲存層的需求。
 //
@@ -25,44 +36,103 @@ func NewService(repo Repository) *Service {
 	return &Service{repo: repo}
 }
 
-// TODO(day1): 以下五個方法自己實作。
-//
 // 共同重點:
 //   1. ctx 一定要往下傳,不要用 context.Background()
 //   2. 錯誤往上傳時用 %w 包裝,保留 errors.Is 的判斷能力
 //   3. 業務規則寫在這層,不要漏到 handler 或 repository
 
-// Register 註冊設備。冪等:同一個 Serial 重複註冊視為同一次註冊。
-//
-// 提示:先 Validate,再 repo.Create。若 Create 回 ErrAlreadyExists,
-// 改呼叫 GetBySerial 把現有那筆回去 —— 不要覆蓋既有的 Name/Location,
-// 設備重開機不該把人在平台上改過的名字蓋掉。
+// Register 註冊設備。冪等:同一個 Serial 重複註冊視為同一次註冊,
+// 回傳既有那筆,不會覆蓋平台上已改過的 Name/Location。
 //
 // 新註冊的設備一律 Enabled=true,不接受外界指定。
 func (s *Service) Register(ctx context.Context, in RegisterInput) (*Device, error) {
-	panic("not implemented")
+
+	if err := in.Validate(); err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	d := &Device{
+		Serial:    in.Serial,
+		Name:      in.Name,
+		Location:  in.Location,
+		Enabled:   true,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := s.repo.Create(ctx, d); err != nil {
+		if errors.Is(err, ErrAlreadyExists) {
+			existing, err := s.repo.GetBySerial(ctx, in.Serial)
+			if err != nil {
+				return nil, fmt.Errorf("register %s: %w", in.Serial, err)
+			}
+			return existing, nil
+		}
+		return nil, fmt.Errorf("register %s: %w", in.Serial, err)
+	}
+	return d, nil
 }
 
+// Get 依 Serial 取單一設備。找不到時回傳包裝過的 ErrNotFound。
 func (s *Service) Get(ctx context.Context, serial string) (*Device, error) {
-	panic("not implemented")
+	d, err := s.repo.GetBySerial(ctx, serial)
+	if err != nil {
+		return nil, fmt.Errorf("get device %s: %w", serial, err)
+	}
+	return d, nil
 }
 
-// List 提示:limit 要有預設值和上限,別讓呼叫端要 10000 筆你就給。
-func (s *Service) List(ctx context.Context, limit, offset int) ([]*Device, error) {
-	panic("not implemented")
-}
-
-// Update 更新 Name / Location / Enabled。
+// List 回傳設備清單。
 //
-// 提示:先 Validate,再 GetBySerial 確認存在,套上新值、更新 UpdatedAt,再 repo.Update。
+// limit 未指定或超出範圍時會被夾到 [1, 200],預設 50。
+func (s *Service) List(ctx context.Context, limit, offset int) ([]*Device, error) {
+
+	if limit <= 0 {
+		limit = defaultListLimit
+	}
+	if limit > maxListLimit {
+		limit = maxListLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	devices, err := s.repo.List(ctx, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list devices (limit=%d, offset=%d): %w", limit, offset, err)
+	}
+	return devices, nil
+}
+
+// Update 以 in 的內容完整覆寫 Name / Location / Enabled。
+// 設備不存在時回傳包裝過的 ErrNotFound。
 func (s *Service) Update(ctx context.Context, serial string, in UpdateInput) (*Device, error) {
-	panic("not implemented")
+	if err := in.Validate(); err != nil {
+		return nil, err
+	}
+
+	d, err := s.repo.GetBySerial(ctx, serial)
+	if err != nil {
+		return nil, fmt.Errorf("update device %s: %w", serial, err)
+	}
+
+	d.Name = in.Name
+	d.Location = in.Location
+	d.Enabled = in.Enabled
+	d.UpdatedAt = time.Now().UTC()
+	if err := s.repo.Update(ctx, d); err != nil {
+		return nil, fmt.Errorf("update device %s: %w", serial, err)
+	}
+	return d, nil
 }
 
 // Delete 刪除設備,連同它的讀數。
 //
-// 提示:冪等 —— 刪一台不存在的設備不該是錯誤,直接回 nil。
-// 真正的重點在 store 那層:兩個 DELETE 必須在同一個交易裡。
+// 冪等:刪一台不存在的設備不是錯誤,一樣回 nil。
 func (s *Service) Delete(ctx context.Context, serial string) error {
-	panic("not implemented")
+	if err := s.repo.Delete(ctx, serial); err != nil {
+		return fmt.Errorf("delete device %s: %w", serial, err)
+	}
+	return nil
 }

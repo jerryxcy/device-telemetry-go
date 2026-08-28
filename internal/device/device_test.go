@@ -2,11 +2,11 @@ package device
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
 // Table-driven test 是 Go 最有代表性的測試風格,面試常聊。
-// 這裡先給你骨架,實作之後把 t.Skip 那行刪掉。
 
 func TestRegisterInput_Validate(t *testing.T) {
 	tests := []struct {
@@ -29,12 +29,40 @@ func TestRegisterInput_Validate(t *testing.T) {
 			input:   RegisterInput{Serial: "SN-0001", Name: ""},
 			wantErr: ErrInvalidInput,
 		},
+		{
+			name:    "serial too long",
+			input:   RegisterInput{Serial: strings.Repeat("A", 129), Name: "溫度計"},
+			wantErr: ErrInvalidInput,
+		},
+		{
+			name:    "serial at limit is ok",
+			input:   RegisterInput{Serial: strings.Repeat("A", 128), Name: "溫度計"},
+			wantErr: nil,
+		},
+		{
+			name:    "whitespace-only serial",
+			input:   RegisterInput{Serial: "   ", Name: "溫度計"},
+			wantErr: ErrInvalidInput,
+		},
+		{
+			name:    "whitespace-only name",
+			input:   RegisterInput{Serial: "SN-0001", Name: "   "},
+			wantErr: ErrInvalidInput,
+		},
+		{
+			name:    "name too long",
+			input:   RegisterInput{Serial: "SN-0001", Name: strings.Repeat("溫", 129)},
+			wantErr: ErrInvalidInput,
+		},
+		{
+			name:    "name at limit is ok",
+			input:   RegisterInput{Serial: "SN-0001", Name: strings.Repeat("溫", 128)},
+			wantErr: nil,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Skip("TODO(day1): 實作 RegisterInput.Validate 後把這行刪掉")
-
 			assertErrIs(t, tt.input.Validate(), tt.wantErr)
 		})
 	}
@@ -61,12 +89,15 @@ func TestUpdateInput_Validate(t *testing.T) {
 			input:   UpdateInput{Name: "", Enabled: true},
 			wantErr: ErrInvalidInput,
 		},
+		{
+			name:    "name too long",
+			input:   UpdateInput{Name: strings.Repeat("溫", 129), Enabled: true},
+			wantErr: ErrInvalidInput,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Skip("TODO(day1): 實作 UpdateInput.Validate 後把這行刪掉")
-
 			assertErrIs(t, tt.input.Validate(), tt.wantErr)
 		})
 	}

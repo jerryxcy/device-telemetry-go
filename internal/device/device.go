@@ -6,7 +6,10 @@ package device
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // 業務錯誤。上層用 errors.Is 判斷,不要用字串比對。
@@ -22,6 +25,9 @@ var (
 	// ErrDisabled 供 Day 2 的上報准入使用:設備存在,但平台不收它的讀數。
 	ErrDisabled = errors.New("device is disabled")
 )
+
+// maxFieldLen 是文字欄位的長度上限,以字元(rune)計,不是 byte。
+const maxFieldLen = 128
 
 // Device 是核心 domain 型別。
 //
@@ -46,15 +52,32 @@ type RegisterInput struct {
 	Location string `json:"location"`
 }
 
+// validateName 檢查給人看的標籤欄位。Register 和 Update 共用同一條規則。
+func validateName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%w: name is required", ErrInvalidInput)
+	}
+	if utf8.RuneCountInString(name) > maxFieldLen {
+		return fmt.Errorf("%w: name exceeds %d characters", ErrInvalidInput, maxFieldLen)
+	}
+	return nil
+}
+
 // Validate 檢查註冊輸入。
 //
-// TODO(day1): 自己實作。
-//   - Serial 不可為空,長度上限 128
-//   - Name 不可為空,長度上限 128
-//   - 錯誤用 fmt.Errorf("%w: serial is required", ErrInvalidInput) 包起來,
-//     上層 errors.Is(err, ErrInvalidInput) 才判斷得到
+//   - Serial 不可為空,長度上限 128 個字元
+//   - Name 不可為空,長度上限 128 個字元
+//
+// 所有錯誤都滿足 errors.Is(err, ErrInvalidInput)。
 func (in RegisterInput) Validate() error {
-	return nil
+	if strings.TrimSpace(in.Serial) == "" {
+		return fmt.Errorf("%w: serial is required", ErrInvalidInput)
+	}
+	if utf8.RuneCountInString(in.Serial) > maxFieldLen {
+		return fmt.Errorf("%w: serial exceeds %d characters", ErrInvalidInput, maxFieldLen)
+	}
+
+	return validateName(in.Name)
 }
 
 // UpdateInput 是 PUT 能改的全部欄位。
@@ -68,8 +91,7 @@ type UpdateInput struct {
 
 // Validate 檢查更新輸入。
 //
-// TODO(day1): 自己實作。Enabled 是 bool,沒有非法值,所以這裡只需要檢查
-//   - Name 不可為空,長度上限 128
+// Enabled 是 bool,沒有非法值,所以只需要檢查 Name。
 func (in UpdateInput) Validate() error {
-	return nil
+	return validateName(in.Name)
 }
