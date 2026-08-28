@@ -22,6 +22,9 @@ test: ## 單元測試
 test-int: ## 整合測試(需要 docker)
 	go test ./... -race -count=1 -tags=integration
 
+smoke: ## 端到端煙霧測試(服務要先跑起來)
+	@./scripts/smoke.sh
+
 lint: ## vet + gofmt 檢查
 	go vet ./...
 	@test -z "$$(gofmt -l .)" || (echo "gofmt needed:"; gofmt -l .; exit 1)
@@ -29,4 +32,4 @@ lint: ## vet + gofmt 檢查
 build: ## 編譯全部
 	go build ./...
 
-.PHONY: help up down db-reset run test test-int lint build
+.PHONY: help up down db-reset run test test-int smoke lint build

@@ -82,11 +82,22 @@ make help
 make run
 ```
 
-跑測試:
+跑單元測試:
 
 ```bash
 make test
 ```
+
+跑端到端煙霧測試(服務要先跑起來):
+
+```bash
+./scripts/smoke.sh                       # 預設打 http://localhost:8080
+./scripts/smoke.sh http://其他位址:8080
+```
+
+它打的是真的 HTTP,所以一次驗證 handler → service → store → PostgreSQL 整條鏈 ——
+單元測試用假的 Repository,驗不到 SQL 欄位順序、pgx 錯誤碼與交易。全數通過 exit 0,
+任何一項失敗 exit 1,腳本只碰自己建立的 `SMOKE-*` 設備。
 
 改了 `migrations/` 之後要重建資料庫(init script 只在 volume 首次建立時執行):
 
@@ -98,13 +109,13 @@ make db-reset
 
 **Day 1 — device-service**
 
-- [ ] `RegisterInput.Validate()` / `UpdateInput.Validate()`
-- [ ] `device.Service` 五個方法(`Register` 與 `Delete` 都要冪等)
-- [ ] `store.DeviceStore` 五個方法(`pgx.ErrNoRows` → `ErrNotFound`,`23505` → `ErrAlreadyExists`)
-- [ ] `DeviceStore.Delete` 的交易處理 —— 本專案唯一需要 `Begin`/`Commit`/`Rollback` 的地方
-- [ ] `httpapi` 五個 handler
-- [ ] `httpapi.Logging` middleware(需要包一層 ResponseWriter 才拿得到 status code)
-- [ ] `device_test.go` 的 table-driven test 跑綠
+- [x] `RegisterInput.Validate()` / `UpdateInput.Validate()`
+- [x] `device.Service` 五個方法(`Register` 與 `Delete` 都要冪等)
+- [x] `store.DeviceStore` 五個方法(`pgx.ErrNoRows` → `ErrNotFound`,`23505` → `ErrAlreadyExists`)
+- [x] `DeviceStore.Delete` 的交易處理 —— 本專案唯一需要 `Begin`/`Commit`/`Rollback` 的地方
+- [x] `httpapi` 五個 handler
+- [x] `httpapi.Logging` middleware(需要包一層 ResponseWriter 才拿得到 status code)
+- [x] `device_test.go` 的 table-driven test 跑綠
 
 **Day 2 — telemetry-service**
 

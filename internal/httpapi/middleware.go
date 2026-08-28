@@ -4,12 +4,28 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"log/slog"
 	"net/http"
+	"time"
 )
 
 type ctxKey string
 
 const requestIDKey ctxKey = "request_id"
+
+// statusRecorder 包住 http.ResponseWriter,把 handler 寫出的 status code 記下來。
+//
+// 用嵌入(embedding)而不是自己存一個欄位:沒有明寫的方法會自動轉發給內層,
+// 所以它自動滿足 http.ResponseWriter,只有 WriteHeader 是我們接手的。
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (rec *statusRecorder) WriteHeader(status int) {
+	rec.status = status
+	rec.ResponseWriter.WriteHeader(status)
+}
 
 // RequestID 是「已完成範例」,照著它的形狀寫下一個 middleware。
 //
@@ -39,13 +55,25 @@ func RequestIDFrom(ctx context.Context) string {
 
 // Logging 記錄每個請求的 method、path、status、耗時。
 //
-// TODO(day1): 自己實作。
-//
-// 卡點提示:http.ResponseWriter 沒有讀取 status code 的方法,
-// 你需要包一層自己的 struct 嵌入 http.ResponseWriter 並攔截 WriteHeader。
-// 這是 Go 裡「embedding + 覆寫方法」的經典練習。
+// status 要靠 statusRecorder 攔下來 —— http.ResponseWriter 只能寫,
+// 沒有任何方法可以讀回 handler 送出的 status code。
 func Logging(next http.Handler) http.Handler {
-	return next
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+
+		// handler 只呼叫 Write 而不呼叫 WriteHeader 時,net/http 會隱含補一個 200
+		// 但那不會經過我們的 WriteHeader,所以預設值得自己填。
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+
+		slog.Info("request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rec.status,
+			"duration_ms", float64(time.Since(start).Microseconds())/1000,
+			"request_id", RequestIDFrom(r.Context()),
+		)
+	})
 }
 
 // Chain 讓 middleware 可以疊起來。已完成。
