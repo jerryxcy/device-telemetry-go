@@ -2,13 +2,13 @@
 #
 # device-service 的 gRPC 介面端到端測試。
 #
-# 對照 smoke.sh(HTTP)—— 兩者打的是同一個 device.Service,只是換一層傳輸協定。
+# 對照 smoke-device-http.sh —— 兩者打的是同一個 device.Service,只是換一層傳輸協定。
 # 這支特別驗證那條界線:「設備沒註冊」是一個答案(回傳值),
 # 「查詢失敗」才是錯誤(gRPC status code)。搞混的話 telemetry-service
 # 會把資料庫故障誤判成「這台設備沒註冊」而安靜地丟掉讀數。
 #
 #   前置:make up && make run,以及 brew install grpcurl
-#   用法:./scripts/smoke-grpc.sh [http-url] [grpc-addr]
+#   用法:./scripts/smoke-device-grpc.sh [http-url] [grpc-addr]
 #         預設 http://localhost:8080 與 localhost:9090
 #
 # 全部通過 exit 0,任何一項失敗 exit 1。腳本只碰自己建立的 GSMOKE-* 設備。
