@@ -5,7 +5,7 @@
 # 它打的是真的 HTTP,所以一次驗證 handler → service → store → PostgreSQL 整條鏈。
 # 單元測試用假的 Repository,驗不到 SQL 欄位順序、pgx 錯誤碼、交易這些東西。
 #
-#   前置:make up && make run(或 docker compose up -d --build)
+#   前置:make run-device(或 docker compose up -d --build)
 #   用法:./scripts/smoke-device-http.sh [base-url]   預設 http://localhost:8080
 #
 # 全部通過 exit 0,任何一項失敗 exit 1。腳本只碰自己建立的 SMOKE-* 設備。

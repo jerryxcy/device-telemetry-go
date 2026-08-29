@@ -8,9 +8,9 @@
 #   整批的前提不成立(未註冊、已停用) → gRPC 錯誤碼,連 results 都沒有
 #   單筆的問題(時鐘、資料不合法)     → 正常回應,結果放在對應的 ReadingResult
 #
-#   前置:make up、兩個服務都要跑,以及 brew install grpcurl
-#         終端機 A:make run
-#         終端機 B:GRPC_ADDR=:9091 go run ./cmd/telemetry-service
+#   前置:兩個服務都要跑,以及 brew install grpcurl
+#         終端機 A:make run-device
+#         終端機 B:make run-telemetry
 #   用法:./scripts/smoke-telemetry-grpc.sh [http-url] [device-grpc] [telemetry-grpc]
 #         預設 http://localhost:8080 / localhost:9090 / localhost:9091
 #
@@ -93,13 +93,13 @@ section() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 for pair in "$BASE/healthz|device-service HTTP" ; do
 	url=${pair%%|*}
 	curl -sS -o /dev/null --max-time 3 "$url" 2>/dev/null || {
-		echo "連不上 ${pair##*|}($url):make run 起來了嗎?" >&2
+		echo "連不上 ${pair##*|}($url):make run-device 起來了嗎?" >&2
 		exit 2
 	}
 done
 grpcurl -plaintext "$TELEMETRY_GRPC" list >/dev/null 2>&1 || {
 	echo "連不上 telemetry-service($TELEMETRY_GRPC):" >&2
-	echo "  GRPC_ADDR=:9091 go run ./cmd/telemetry-service" >&2
+	echo "  make run-telemetry" >&2
 	exit 2
 }
 

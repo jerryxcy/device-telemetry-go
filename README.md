@@ -1,200 +1,207 @@
 # device-telemetry-go
 
-設備遙測平台 — 以 Go 實作的微服務練習專案。
+設備遙測平台 —— 以 Go 實作的微服務練習專案。
 
-`device-service` 管理設備的身分與服役狀態,`telemetry-service` 接收設備上報的 Reading,
-並向 `device-service` 驗證這台設備是否有資格上報。重點不在功能多寡,而在服務間通訊、
-錯誤處理,以及重送情境下的寫入冪等性。
+溫度計、濕度計這類設備會定期把量到的數值傳回平台。**device-service** 管理設備的身分
+與啟用狀態,**telemetry-service** 收下這些數值(專案裡稱為 Reading),並在寫入前向
+device-service 確認這台設備有沒有資格上報。
 
-領域詞彙見 [CONTEXT.md](./CONTEXT.md),關鍵設計決策見 [docs/adr/](./docs/adr/)。
+重點不在功能多寡,而在三件事:**服務間通訊**(HTTP 與 gRPC 各用在對的地方)、
+**錯誤處理**(哪些是答案、哪些是失敗),以及**重送情境下的寫入冪等性**
+(設備會重試,平台不能因此長出重複資料)。
+
+用到的東西幾乎都是標準庫,加上兩個套件:`net/http`、`log/slog`、`pgx`、`grpc`。
+沒有 web 框架、沒有 ORM、沒有 DI 容器。
+
+---
 
 ## 架構
 
+```mermaid
+flowchart LR
+    admin["管理者<br/>curl / 後台"]
+    dev["設備"]
+
+    subgraph ds["device-service"]
+        direction TB
+        dshttp["HTTP :8080<br/>五支 CRUD"]
+        dsgrpc["gRPC :9090<br/>CheckEligibility"]
+    end
+
+    subgraph ts["telemetry-service"]
+        tsgrpc["gRPC :9091<br/>SubmitReadings"]
+    end
+
+    pg[("PostgreSQL<br/>devices · readings")]
+
+    admin -->|HTTP / JSON| dshttp
+    dev -->|gRPC| tsgrpc
+    tsgrpc -->|"gRPC:這台能上報嗎?"| dsgrpc
+    dshttp --> pg
+    dsgrpc --> pg
+    tsgrpc --> pg
 ```
-                    HTTP :8080
-   admin  ────────────────────►  device-service  ──┐
-                                        ▲          │
-                             gRPC :9090 │          │
-                            (查詢上報資格)          ├──►  PostgreSQL
-                                        │          │       devices
-   device ────────────────────►  telemetry-service ┘       readings
-                  gRPC :9091
-```
 
-同一個 PostgreSQL 實例、兩張表 —— `readings` 對 `devices` 有外鍵,所以不能拆庫
-(見 [ADR-0003](./docs/adr/0003-application-level-delete.md))。
+| 元件 | 負責什麼 |
+|---|---|
+| **device-service** | 設備的 CRUD(對人開 HTTP)、回答「這台能不能上報」(對服務開 gRPC) |
+| **telemetry-service** | 收下設備上報的 Reading,寫入前先問 device-service |
+| **PostgreSQL** | 兩張表:`devices` 與 `readings` |
 
-device-service 同時開 HTTP 與 gRPC,兩者共用同一個 `device.Service`:業務邏輯只有
-一份,差別只在傳輸協定。位址可用 `HTTP_ADDR` 與 `GRPC_ADDR` 覆寫。
+對人的介面用 HTTP、服務之間用 gRPC。為什麼這樣分、每個服務內部怎麼分層,見
+[docs/design.md](./docs/design.md)。
 
-telemetry-service 只開 gRPC。它同時是 server(對設備)與 client(對 device-service),
-位址可用 `GRPC_ADDR` 與 `DEVICE_GRPC_ADDR` 覆寫。
-
-## 技術選擇與理由
+### 技術選擇
 
 | 選擇 | 理由 |
 |---|---|
-| `net/http` (Go 1.22 ServeMux) | 內建已支援 `GET /devices/{serial}` 這類路由,一般 CRUD 不需要 gin/chi |
-| `pgx` + 手寫 SQL | 不用 ORM。型別可見、query 可控,效能問題查得出來 |
-| 三層分層 handler / service / store | service 層不知道 HTTP 也不知道 SQL,可獨立測試 |
-| interface 定義在使用端 | `device.Repository` 定義在 service 旁邊而非 store 裡,由消費者宣告需求 |
+| `net/http`(Go 1.22 ServeMux) | 內建就支援 `GET /devices/{serial}` 這類路由,一般 CRUD 不需要 gin/chi |
+| `pgx` + 手寫 SQL | 不用 ORM。型別看得見、query 控制得住,效能問題查得出來 |
+| gRPC + `buf` | 服務間的契約寫在 `.proto`,兩端程式碼從同一份產生。buf 取代 protoc:設定寫在檔案裡而非一長串參數,還附帶 lint 與相容性檢查 |
 | `log/slog` | 標準庫的結構化日誌,不需要第三方 logger |
-| gRPC + `buf` | 服務間通訊以 `.proto` 為契約,兩端程式碼從同一份產生。buf 取代 protoc:設定寫在檔案裡而非一長串指令參數,並附帶 lint 與相容性檢查 |
+| 分三層 + interface 定義在使用端 | 領域層不知道 HTTP 也不知道 SQL,可以完全不碰資料庫做測試。見 [design.md](./docs/design.md) |
 
-## 領域模型
+---
 
-設備以**出廠序號**作為身分,而非平台產生的 UUID([ADR-0001](./docs/adr/0001-serial-as-natural-key.md))。
+## 快速開始
 
-`enabled` 只有開與關兩個狀態,所以是 `bool` 而不是 enum —— 非法值在型別上就不存在,
-不需要任何驗證函式去擋。除役的設備維持 Disabled 即可,不需要第三種狀態。
+需要 **Go 1.26+** 與 **Docker**。
 
-刪除設備會連同它的讀數一起刪除,由應用層在交易裡完成而非 `ON DELETE CASCADE`
-([ADR-0003](./docs/adr/0003-application-level-delete.md))。
+兩個服務各開一個終端機(`run-*` 會自己先把資料庫起來):
 
-### 冪等性
+```bash
+make run-device      # HTTP :8080 / gRPC :9090
+```
 
-兩個地方需要冪等,原因都是「設備會重試」:
+```bash
+make run-telemetry   # gRPC :9091,會去問 device-service
+```
 
-**註冊** — 同一個 Serial 重複註冊視為同一次,回傳現有那筆,不覆蓋既有欄位。設備重開機
-不該把人在平台上改過的名字蓋回出廠預設值。
+第三個終端機:
 
-**讀數** — `readings` 以 `(serial, recorded_at, metric)` 為主鍵,寫入端
-`ON CONFLICT DO NOTHING` 直接吸收重送。這要求 `recorded_at` 由**設備的時鐘**提出而非
-平台蓋章 —— 否則重送會產生新的時間值,唯一鍵永遠不衝突,去重會靜默失效
-([ADR-0002](./docs/adr/0002-device-clock-as-dedup-key.md))。
+```bash
+# 註冊一台設備
+curl -s -X POST localhost:8080/devices \
+  -H 'Content-Type: application/json' \
+  -d '{"serial":"SN-0001","name":"一樓溫度計","location":"1F"}' | jq
 
-## API
+# 再送一次 —— 註冊是冪等的,現有的名字不會被蓋掉
+curl -s -X POST localhost:8080/devices \
+  -H 'Content-Type: application/json' \
+  -d '{"serial":"SN-0001","name":"想蓋掉的名字"}' | jq
 
-五支標準 CRUD,路徑裡沒有動詞。
+curl -s localhost:8080/devices | jq
+```
+
+設備上報走 gRPC:
+
+```bash
+grpcurl -plaintext -d '{
+  "serial": "SN-0001",
+  "readings": [{"recordedAt":"2026-08-29T10:00:00Z","metric":"temperature","value":21.5}]
+}' localhost:9091 telemetry.v1.TelemetryService/SubmitReadings
+```
+
+送第二次同樣的內容,回應會從 `ACCEPTED` 變成 `DUPLICATE` —— 讀數的寫入也是冪等的。
+
+### API
 
 | Method | Path | 說明 |
 |---|---|---|
-| `GET` | `/healthz` | liveness |
-| `GET` | `/readyz` | readiness,會實際 ping 資料庫 |
+| `GET` | `/healthz` | liveness:process 還活著 |
+| `GET` | `/readyz` | readiness:會實際 ping 資料庫 |
 | `POST` | `/devices` | 註冊設備,**冪等** |
 | `GET` | `/devices` | 列出設備(`?limit=&offset=`) |
 | `GET` | `/devices/{serial}` | 取得單一設備 |
 | `PUT` | `/devices/{serial}` | 更新 `name` / `location` / `enabled` |
-| `DELETE` | `/devices/{serial}` | 刪除設備與其讀數,冪等 |
+| `DELETE` | `/devices/{serial}` | 刪除設備與其讀數,**冪等** |
 
-每個動詞都是字面上的意思,路徑裡沒有動詞。
+| gRPC method | 說明 |
+|---|---|
+| `device.v1.DeviceService/CheckEligibility` | 這台設備能不能上報 |
+| `telemetry.v1.TelemetryService/SubmitReadings` | 批次上報,逐筆回結果 |
 
-## 開發
+---
 
-需要 Go 1.26+ 與 Docker。
+## 開發與測試
 
-只有要修改 `proto/` 時才需要多裝 buf 與兩個產生器 —— `gen/` 底下的程式碼已經進版控,
-單純建置、跑測試或 build image 都不需要它們:
+`make help` 會列出所有指令。
+
+| 指令 | 做什麼 |
+|---|---|
+| `make up` / `make down` | 起 / 關 PostgreSQL |
+| `make run-device` / `make run-telemetry` | 本機跑兩個服務(各開一個終端機) |
+| `make test` | 單元測試(不需要資料庫,約兩秒) |
+| `make test-int` | 整合測試(testcontainers 自己起資料庫) |
+| `make lint` | `go vet` + `gofmt` 檢查 |
+| `make db-reset` | 砍掉 DB volume 重建(改了 `migrations/` 之後要跑) |
+| `make proto` | 改了 `.proto` 之後重新產生 Go 程式碼 |
+
+### 四種測試,各自抓不同的東西
+
+| 種類 | 指令 | 需要 | 抓得到什麼 |
+|---|---|---|---|
+| 單元 | `make test` | 無 | 業務邏輯。用假的 Repository,完全不碰資料庫 |
+| 整合 | `make test-int` | Docker | SQL 本身:欄位順序、錯誤碼轉換、交易語意 |
+| smoke | `make smoke-device-http` | 服務在跑 | HTTP 整條鏈 |
+| smoke | `make smoke-device-grpc` | + `grpcurl` | gRPC 整條鏈 |
+| smoke | `make smoke-telemetry-grpc` | 兩個服務都在跑 | 跨服務的上報流程 |
+
+三支 smoke test 會自己斷言結果,全過 `exit 0`、任一項失敗 `exit 1`,而且只碰自己建立的
+測試資料。裡面每個呼叫上方都附了**可以直接複製執行的 `curl` / `grpcurl`**,想手動
+重現某一項時很方便。
+
+整合測試靠 [testcontainers](https://golang.testcontainers.org/) 起一個乾淨的 PostgreSQL,
+並且**用 `migrations/001_init.sql` 建 schema** —— 所以它同時也是 migration 的回歸測試。
+想改成對著 `make up` 起來的資料庫跑(快一點)就設 `DATABASE_URL`。
+
+### 改 `.proto` 才需要的工具
+
+`gen/` 底下產生好的程式碼已經進版控,所以**單純建置、跑測試、build image 都不用裝這些**:
 
 ```bash
-brew install buf
+brew install buf grpcurl
 go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 ```
 
-手動打 gRPC 或跑 gRPC 煙霧測試還需要 grpcurl(gRPC 版的 curl):
+改完跑 `make proto`。送出前用 `make proto-breaking` 確認沒有破壞相容性 ——
+`.proto` 的**欄位編號**才是線上格式的識別碼,改欄位名是安全的,重用編號不是。
 
-```bash
-brew install grpcurl
+---
+
+## 專案結構
+
+```
+cmd/                  每個子目錄編成一個執行檔
+  device-service/       HTTP + gRPC 雙 server
+  telemetry-service/    gRPC server,同時是 device-service 的 client
+  healthcheck/          給 docker healthcheck 用的小工具(最終 image 裡沒有 curl)
+
+internal/             只有這個 module 能 import —— Go 編譯器層級的限制,不只是慣例
+  device/               【領域】設備的型別、業務錯誤、Service
+  telemetry/            【領域】讀數的型別、能不能上報的判斷規則、Service
+  store/                【儲存】唯一知道 SQL 長什麼樣的地方
+  httpapi/              【傳輸】HTTP handler 與 middleware
+  grpcapi/              【傳輸】gRPC server 實作與 interceptor
+  deviceclient/         【傳輸】device-service 的 gRPC client
+  reqid/                request ID 在 context 裡的唯一存放處
+
+proto/                服務間契約的唯一來源
+gen/                  由 proto/ 產生,不要手改(下次 make proto 會覆蓋)
+migrations/           資料庫 schema,docker-compose 在首次啟動時執行
+scripts/              端到端 smoke test
+docs/adr/             關鍵設計決策與它們的理由
 ```
 
-```bash
-make help
-```
+---
 
-起資料庫並在本機跑 device-service:
+## 延伸閱讀
 
-```bash
-make run
-```
-
-跑單元測試:
-
-```bash
-make test
-```
-
-跑端到端煙霧測試(服務要先跑起來):
-
-```bash
-make smoke-device-http
-./scripts/smoke-device-http.sh http://其他位址:8080   # 換位址時直接跑腳本
-```
-
-它打的是真的 HTTP,所以一次驗證 handler → service → store → PostgreSQL 整條鏈 ——
-單元測試用假的 Repository,驗不到 SQL 欄位順序、pgx 錯誤碼與交易。全數通過 exit 0,
-任何一項失敗 exit 1,腳本只碰自己建立的 `SMOKE-*` 設備。
-
-gRPC 介面有另一支:
-
-```bash
-make smoke-device-grpc      # 預設 http://localhost:8080 與 localhost:9090
-```
-
-它用 HTTP 擺好設備狀態、用 gRPC 查詢,所以同時驗證了兩個 server 共用同一個
-`device.Service`。重點在「設備沒註冊」必須是一個**成功的回應**(答案放在
-`Eligibility` 欄位),只有「查詢失敗」才回 gRPC 錯誤碼 —— 弄反的話
-telemetry-service 會把資料庫故障誤判成「這台設備沒註冊」而安靜地丟掉讀數。
-
-跨兩個服務的上報流程另有一支(需要 device-service 與 telemetry-service 都在跑):
-
-```bash
-make smoke-telemetry-grpc
-```
-
-它驗證的是兩層拒絕的分界:整批的前提不成立(未註冊、已停用)回 gRPC 錯誤碼、
-連 `results` 都沒有;單筆的問題(時鐘跑掉、資料不合法)則是正常回應,結果放在
-對應的 `ReadingResult`,其他筆照常寫入。
-
-`make test-int` 跑的是需要真資料庫的整合測試。它靠 testcontainers 自己起一個乾淨的
-PostgreSQL(用 `migrations/001_init.sql` 建 schema,所以那些測試同時也是 migration
-的回歸測試),跑完就丟。想改成對著 `make up` 起來的資料庫跑就設 `DATABASE_URL`:
-
-```bash
-make test-int                                    # 起容器,乾淨且可重現
-DATABASE_URL=... go test ./... -tags=integration  # 對著既有資料庫,快一點
-```
-
-改了 `proto/` 之後要重新產生 Go 程式碼:
-
-```bash
-make proto
-```
-
-`.proto` 是跨服務的契約,欄位編號才是線上格式的識別碼(改欄位名是安全的,重用編號不是)。
-送出改動前確認沒有破壞相容性:
-
-```bash
-make proto-breaking
-```
-
-改了 `migrations/` 之後要重建資料庫(init script 只在 volume 首次建立時執行):
-
-```bash
-make db-reset
-```
-
-## 進度
-
-**Day 1 — device-service**
-
-- [x] `RegisterInput.Validate()` / `UpdateInput.Validate()`
-- [x] `device.Service` 五個方法(`Register` 與 `Delete` 都要冪等)
-- [x] `store.DeviceStore` 五個方法(`pgx.ErrNoRows` → `ErrNotFound`,`23505` → `ErrAlreadyExists`)
-- [x] `DeviceStore.Delete` 的交易處理 —— 本專案唯一需要 `Begin`/`Commit`/`Rollback` 的地方
-- [x] `httpapi` 五個 handler
-- [x] `httpapi.Logging` middleware(需要包一層 ResponseWriter 才拿得到 status code)
-- [x] `device_test.go` 的 table-driven test 跑綠
-
-**Day 2 — telemetry-service 與服務間 gRPC**
-
-- [x] proto 定義:`device.v1.DeviceService` 與 `telemetry.v1.TelemetryService`
-- [x] device-service 開 gRPC 介面:`CheckEligibility` —— 「沒註冊」是一個答案(放在
-      `Eligibility` 欄位),只有「查不到答案」才回 gRPC 錯誤碼
-- [x] telemetry-service 的 gRPC server:`SubmitReadings` 批次上報,逐筆回結果
-- [x] telemetry-service 作為 client 向 device-service 查詢上報資格
-- [x] 上報准入:未註冊 / Disabled / 時鐘超出區間,三種可區分的拒絕
-- [x] `store.ReadingStore`:`ON CONFLICT DO NOTHING`,並區分「真的寫入」與「被吸收的重送」
-      —— 這是 `ACCEPTED` 與 `DUPLICATE` 分得開的前提
-- [x] repository 層整合測試(testcontainers)—— `DeviceStore` 從 0% 到 83.7%,CI 也跑得動了
-- [x] gRPC 的 request ID:用 metadata 跨服務傳遞,對齊 HTTP 那邊的 `X-Request-ID`
+| 文件 | 內容 |
+|---|---|
+| **[CONTEXT.md](./CONTEXT.md)** | 領域詞彙 —— 什麼叫 Device、Reading、Enabled,以及**不要用**哪些詞 |
+| **[docs/design.md](./docs/design.md)** | 分層、依賴方向、錯誤怎麼跨層傳遞、冪等性怎麼實作。從上面那張架構圖逐層展開 |
+| [ADR-0001](./docs/adr/0001-serial-as-natural-key.md) | 用出廠序號當主鍵,不另外產生 UUID |
+| [ADR-0002](./docs/adr/0002-device-clock-as-dedup-key.md) | 用設備的時鐘做去重依據 |
+| [ADR-0003](./docs/adr/0003-application-level-delete.md) | 刪除在應用層的交易裡做,不用 `ON DELETE CASCADE` |
