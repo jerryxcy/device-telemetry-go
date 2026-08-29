@@ -1,0 +1,11 @@
+version: v2
+clean: true
+plugins:
+  # 訊息型別(struct、Marshal/Unmarshal)
+  - local: protoc-gen-go
+    out: gen
+    opt: paths=source_relative
+  # gRPC 的 client 與 server interface
+  - local: protoc-gen-go-grpc
+    out: gen
+    opt: paths=source_relative

@@ -22,14 +22,24 @@ test: ## 單元測試
 test-int: ## 整合測試(需要 docker)
 	go test ./... -race -count=1 -tags=integration
 
-smoke: ## 端到端煙霧測試(服務要先跑起來)
+smoke: ## 端到端煙霧測試 HTTP(服務要先跑起來)
 	@./scripts/smoke.sh
+
+smoke-grpc: ## 端到端煙霧測試 gRPC(需要 grpcurl)
+	@./scripts/smoke-grpc.sh
 
 lint: ## vet + gofmt 檢查
 	go vet ./...
 	@test -z "$$(gofmt -l .)" || (echo "gofmt needed:"; gofmt -l .; exit 1)
 
+proto: ## 由 proto/ 產生 Go 程式碼(改了 .proto 之後要跑)
+	buf lint
+	buf generate
+
+proto-breaking: ## 檢查 proto 有沒有破壞相容性的改動
+	buf breaking --against '.git#branch=main'
+
 build: ## 編譯全部
 	go build ./...
 
-.PHONY: help up down db-reset run test test-int smoke lint build
+.PHONY: help up down db-reset run test test-int smoke smoke-grpc lint proto proto-breaking build

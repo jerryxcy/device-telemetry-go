@@ -7,6 +7,7 @@
 !go.sum
 !cmd
 !internal
+!gen
 
 # 測試檔不參與建置,排除掉可避免改測試就讓 COPY 那層 cache 失效。
 **/*_test.go

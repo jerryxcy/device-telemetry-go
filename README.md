@@ -11,14 +11,23 @@
 ## 架構
 
 ```
-                  HTTP
-   admin  ──────────────►  device-service  ──►  PostgreSQL
-                                  ▲
-                                  │ gRPC (驗證上報資格)
-                                  │
-   device ──────────────►  telemetry-service ──►  PostgreSQL
-                  gRPC
+                    HTTP :8080
+   admin  ────────────────────►  device-service  ──┐
+                                        ▲          │
+                             gRPC :9090 │          │
+                            (查詢上報資格)          ├──►  PostgreSQL
+                                        │          │       devices
+   device ────────────────────►  telemetry-service ┘       readings
+                    gRPC
 ```
+
+同一個 PostgreSQL 實例、兩張表 —— `readings` 對 `devices` 有外鍵,所以不能拆庫
+(見 [ADR-0003](./docs/adr/0003-application-level-delete.md))。
+
+device-service 同時開 HTTP 與 gRPC,兩者共用同一個 `device.Service`:業務邏輯只有
+一份,差別只在傳輸協定。位址可用 `HTTP_ADDR` 與 `GRPC_ADDR` 覆寫。
+
+telemetry-service 尚未實作,進度見文末。
 
 ## 技術選擇與理由
 
@@ -29,6 +38,7 @@
 | 三層分層 handler / service / store | service 層不知道 HTTP 也不知道 SQL,可獨立測試 |
 | interface 定義在使用端 | `device.Repository` 定義在 service 旁邊而非 store 裡,由消費者宣告需求 |
 | `log/slog` | 標準庫的結構化日誌,不需要第三方 logger |
+| gRPC + `buf` | 服務間通訊以 `.proto` 為契約,兩端程式碼從同一份產生。buf 取代 protoc:設定寫在檔案裡而非一長串指令參數,並附帶 lint 與相容性檢查 |
 
 ## 領域模型
 
@@ -72,6 +82,21 @@
 
 需要 Go 1.26+ 與 Docker。
 
+只有要修改 `proto/` 時才需要多裝 buf 與兩個產生器 —— `gen/` 底下的程式碼已經進版控,
+單純建置、跑測試或 build image 都不需要它們:
+
+```bash
+brew install buf
+go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+```
+
+手動打 gRPC 或跑 gRPC 煙霧測試還需要 grpcurl(gRPC 版的 curl):
+
+```bash
+brew install grpcurl
+```
+
 ```bash
 make help
 ```
@@ -99,6 +124,30 @@ make test
 單元測試用假的 Repository,驗不到 SQL 欄位順序、pgx 錯誤碼與交易。全數通過 exit 0,
 任何一項失敗 exit 1,腳本只碰自己建立的 `SMOKE-*` 設備。
 
+gRPC 介面有另一支:
+
+```bash
+./scripts/smoke-grpc.sh                  # 預設 http://localhost:8080 與 localhost:9090
+```
+
+它用 HTTP 擺好設備狀態、用 gRPC 查詢,所以同時驗證了兩個 server 共用同一個
+`device.Service`。重點在「設備沒註冊」必須是一個**成功的回應**(答案放在
+`Eligibility` 欄位),只有「查詢失敗」才回 gRPC 錯誤碼 —— 弄反的話
+telemetry-service 會把資料庫故障誤判成「這台設備沒註冊」而安靜地丟掉讀數。
+
+改了 `proto/` 之後要重新產生 Go 程式碼:
+
+```bash
+make proto
+```
+
+`.proto` 是跨服務的契約,欄位編號才是線上格式的識別碼(改欄位名是安全的,重用編號不是)。
+送出改動前確認沒有破壞相容性:
+
+```bash
+make proto-breaking
+```
+
 改了 `migrations/` 之後要重建資料庫(init script 只在 volume 首次建立時執行):
 
 ```bash
@@ -117,10 +166,15 @@ make db-reset
 - [x] `httpapi.Logging` middleware(需要包一層 ResponseWriter 才拿得到 status code)
 - [x] `device_test.go` 的 table-driven test 跑綠
 
-**Day 2 — telemetry-service**
+**Day 2 — telemetry-service 與服務間 gRPC**
 
-- [ ] proto 定義與 gRPC server(批次上報,逐筆回結果)
-- [ ] 透過 gRPC 向 device-service 查詢上報資格
+- [x] proto 定義:`device.v1.DeviceService` 與 `telemetry.v1.TelemetryService`
+- [x] device-service 開 gRPC 介面:`CheckEligibility` —— 「沒註冊」是一個答案(放在
+      `Eligibility` 欄位),只有「查不到答案」才回 gRPC 錯誤碼
+- [ ] telemetry-service 的 gRPC server:`SubmitReadings` 批次上報,逐筆回結果
+- [ ] telemetry-service 作為 client 向 device-service 查詢上報資格
 - [ ] 上報准入:未註冊 / Disabled / 時鐘超出區間,三種可區分的拒絕
-- [ ] 讀數寫入與冪等處理
-- [ ] repository 層整合測試(testcontainers)
+- [ ] `store.ReadingStore`:`ON CONFLICT DO NOTHING`,並區分「真的寫入」與「被吸收的重送」
+      —— 這是 `ACCEPTED` 與 `DUPLICATE` 分得開的前提
+- [ ] repository 層整合測試(testcontainers)—— 涵蓋既有的 `DeviceStore`,它目前 0% 覆蓋
+- [ ] gRPC 的 request ID:用 metadata 跨服務傳遞,對齊 HTTP 那邊的 `X-Request-ID`

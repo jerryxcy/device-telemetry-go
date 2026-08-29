@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package device.v1;
+
+option go_package = "github.com/jerryxcy/device-telemetry-go/gen/device/v1;devicev1";
+
+// DeviceService 是 device-service 對「其他服務」開的介面。
+//
+// 對外的設備管理仍然走 HTTP(admin 用),這裡只放服務間需要的查詢。
+// 兩者共用同一個 device.Service,只是換一層傳輸協定。
+service DeviceService {
+  // CheckEligibility 回答「這台設備現在可不可以上報讀數」。
+  //
+  // 刻意不回傳整個 Device —— 呼叫端要的是一個判斷,不是設備資料。
+  // 回傳完整資料會讓 telemetry-service 有能力依賴它不該關心的欄位。
+  rpc CheckEligibility(CheckEligibilityRequest) returns (CheckEligibilityResponse);
+}
+
+message CheckEligibilityRequest {
+  string serial = 1;
+}
+
+message CheckEligibilityResponse {
+  Eligibility eligibility = 1;
+}
+
+// Eligibility 只涵蓋 device-service 知道的事實。
+//
+// 「設備時鐘超出可接受區間」不在這裡 —— 那要看 Reading 本身的時間,
+// device-service 看不到 Reading,那是 telemetry-service 自己的判斷。
+enum Eligibility {
+  ELIGIBILITY_UNSPECIFIED = 0;
+  ELIGIBILITY_ELIGIBLE = 1;
+  // 這個 Serial 從來沒註冊過。
+  ELIGIBILITY_NOT_REGISTERED = 2;
+  // 設備存在,但被人停用了。見 CONTEXT.md 的 Enabled / Disabled。
+  ELIGIBILITY_DISABLED = 3;
+}

@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package telemetry.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/jerryxcy/device-telemetry-go/gen/telemetry/v1;telemetryv1";
+
+// TelemetryService 接收設備上報的 Reading。
+service TelemetryService {
+  // SubmitReadings 接收一批 Reading,逐筆回報結果。
+  //
+  // 一批來自同一台設備,所以 Serial 放在 request 而不是每筆 Reading 上 ——
+  // 上報資格的查詢因此是每批一次,不是每筆一次。
+  //
+  // 這支不會因為部分讀數被拒就整批失敗:回傳的 results 與送出的 readings
+  // 一一對應,設備自己決定要不要重送哪幾筆。整批共通的失敗(例如設備未註冊)
+  // 才會回 gRPC 錯誤碼。
+  rpc SubmitReadings(SubmitReadingsRequest) returns (SubmitReadingsResponse);
+}
+
+// Reading 是單一 Metric 在單一時間點的一筆量測值。
+//
+// 沒有 received_at —— 那是平台蓋的章,設備不該提出。
+message Reading {
+  // 設備自己的時鐘。這是去重的依據,所以必須由設備提出而非平台蓋章,
+  // 否則重送會產生新的時間值,唯一鍵永遠不衝突。見 docs/adr/0002。
+  google.protobuf.Timestamp recorded_at = 1;
+  // 被量測的量,例如 "temperature"。平台不維護受控清單。
+  string metric = 2;
+  double value = 3;
+}
+
+message SubmitReadingsRequest {
+  string serial = 1;
+  repeated Reading readings = 2;
+}
+
+message SubmitReadingsResponse {
+  // 與 request 的 readings 等長,順序一一對應。
+  repeated ReadingResult results = 1;
+}
+
+message ReadingResult {
+  // 對應 request 裡 readings 的索引。設備靠它知道是哪一筆。
+  int32 index = 1;
+  ReadingStatus status = 2;
+  // 給人看的補充說明,可能為空。程式判斷一律看 status。
+  string message = 3;
+}
+
+// ReadingStatus 分成「收下了」與「拒絕了」兩類。
+//
+// ACCEPTED 與 DUPLICATE 對設備而言都代表「不用再重送這筆」,
+// 分開回報只是為了讓重送率成為可觀測的數字。
+enum ReadingStatus {
+  READING_STATUS_UNSPECIFIED = 0;
+  // 這筆是新的,已寫入。
+  READING_STATUS_ACCEPTED = 1;
+  // 同一個 (serial, recorded_at, metric) 已經存在,直接吸收。
+  READING_STATUS_DUPLICATE = 2;
+  // recorded_at 超出可接受區間 —— 設備時鐘跑掉了。見 docs/adr/0002。
+  READING_STATUS_CLOCK_OUT_OF_RANGE = 3;
+  // metric 為空,或 value 不是有限的數(NaN / Inf)。
+  READING_STATUS_INVALID = 4;
+}
