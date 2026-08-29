@@ -7,7 +7,7 @@
 # 「查詢失敗」才是錯誤(gRPC status code)。搞混的話 telemetry-service
 # 會把資料庫故障誤判成「這台設備沒註冊」而安靜地丟掉讀數。
 #
-#   前置:make up && make run,以及 brew install grpcurl
+#   前置:make run-device,以及 brew install grpcurl
 #   用法:./scripts/smoke-device-grpc.sh [http-url] [grpc-addr]
 #         預設 http://localhost:8080 與 localhost:9090
 #

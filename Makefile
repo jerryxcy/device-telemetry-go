@@ -13,8 +13,11 @@ down: ## 關掉所有容器
 db-reset: ## 砍掉 DB volume 重建(改了 migrations 之後要跑)
 	docker compose down -v && docker compose up -d postgres
 
-run: up ## 本機跑 device-service
+run-device: up ## 本機跑 device-service(HTTP :8080 / gRPC :9090)
 	DATABASE_URL="$(DB_URL)" go run ./cmd/device-service
+
+run-telemetry: up ## 本機跑 telemetry-service(gRPC :9091,需要 device-service 也在跑)
+	DATABASE_URL="$(DB_URL)" go run ./cmd/telemetry-service
 
 test: ## 單元測試
 	go test ./... -race -count=1
@@ -45,4 +48,4 @@ proto-breaking: ## 檢查 proto 有沒有破壞相容性的改動
 build: ## 編譯全部
 	go build ./...
 
-.PHONY: help up down db-reset run test test-int smoke-device-http smoke-device-grpc smoke-telemetry-grpc lint proto proto-breaking build
+.PHONY: help up down db-reset run-device run-telemetry test test-int smoke-device-http smoke-device-grpc smoke-telemetry-grpc lint proto proto-breaking build
