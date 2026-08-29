@@ -18,7 +18,7 @@
                             (查詢上報資格)          ├──►  PostgreSQL
                                         │          │       devices
    device ────────────────────►  telemetry-service ┘       readings
-                    gRPC
+                  gRPC :9091
 ```
 
 同一個 PostgreSQL 實例、兩張表 —— `readings` 對 `devices` 有外鍵,所以不能拆庫
@@ -27,7 +27,8 @@
 device-service 同時開 HTTP 與 gRPC,兩者共用同一個 `device.Service`:業務邏輯只有
 一份,差別只在傳輸協定。位址可用 `HTTP_ADDR` 與 `GRPC_ADDR` 覆寫。
 
-telemetry-service 尚未實作,進度見文末。
+telemetry-service 只開 gRPC。它同時是 server(對設備)與 client(對 device-service),
+位址可用 `GRPC_ADDR` 與 `DEVICE_GRPC_ADDR` 覆寫。
 
 ## 技術選擇與理由
 
@@ -135,6 +136,16 @@ gRPC 介面有另一支:
 `Eligibility` 欄位),只有「查詢失敗」才回 gRPC 錯誤碼 —— 弄反的話
 telemetry-service 會把資料庫故障誤判成「這台設備沒註冊」而安靜地丟掉讀數。
 
+跨兩個服務的上報流程另有一支(需要 device-service 與 telemetry-service 都在跑):
+
+```bash
+./scripts/smoke-telemetry.sh
+```
+
+它驗證的是兩層拒絕的分界:整批的前提不成立(未註冊、已停用)回 gRPC 錯誤碼、
+連 `results` 都沒有;單筆的問題(時鐘跑掉、資料不合法)則是正常回應,結果放在
+對應的 `ReadingResult`,其他筆照常寫入。
+
 改了 `proto/` 之後要重新產生 Go 程式碼:
 
 ```bash
@@ -171,10 +182,10 @@ make db-reset
 - [x] proto 定義:`device.v1.DeviceService` 與 `telemetry.v1.TelemetryService`
 - [x] device-service 開 gRPC 介面:`CheckEligibility` —— 「沒註冊」是一個答案(放在
       `Eligibility` 欄位),只有「查不到答案」才回 gRPC 錯誤碼
-- [ ] telemetry-service 的 gRPC server:`SubmitReadings` 批次上報,逐筆回結果
-- [ ] telemetry-service 作為 client 向 device-service 查詢上報資格
-- [ ] 上報准入:未註冊 / Disabled / 時鐘超出區間,三種可區分的拒絕
-- [ ] `store.ReadingStore`:`ON CONFLICT DO NOTHING`,並區分「真的寫入」與「被吸收的重送」
+- [x] telemetry-service 的 gRPC server:`SubmitReadings` 批次上報,逐筆回結果
+- [x] telemetry-service 作為 client 向 device-service 查詢上報資格
+- [x] 上報准入:未註冊 / Disabled / 時鐘超出區間,三種可區分的拒絕
+- [x] `store.ReadingStore`:`ON CONFLICT DO NOTHING`,並區分「真的寫入」與「被吸收的重送」
       —— 這是 `ACCEPTED` 與 `DUPLICATE` 分得開的前提
 - [ ] repository 層整合測試(testcontainers)—— 涵蓋既有的 `DeviceStore`,它目前 0% 覆蓋
 - [ ] gRPC 的 request ID:用 metadata 跨服務傳遞,對齊 HTTP 那邊的 `X-Request-ID`
