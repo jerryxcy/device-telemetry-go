@@ -19,3 +19,7 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l .)" || (gofmt -l .; exit 1)
       - run: go test ./... -race -count=1
+      # 整合測試靠 testcontainers 自己起 PostgreSQL,runner 有 docker 就能跑。
+      # 不要設 DATABASE_URL —— 設了會改用既有資料庫,CI 上並沒有那個東西。
+      - name: integration tests
+        run: go test ./... -race -count=1 -tags=integration

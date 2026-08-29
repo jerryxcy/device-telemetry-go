@@ -2,7 +2,7 @@
 DB_URL ?= postgres://postgres:postgres@localhost:5432/telemetry?sslmode=disable
 
 help: ## 顯示可用指令
-	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
 up: ## 起 postgres(背景)
 	docker compose up -d postgres
@@ -22,14 +22,14 @@ test: ## 單元測試
 test-int: ## 整合測試(需要 docker)
 	go test ./... -race -count=1 -tags=integration
 
-smoke: ## 端到端煙霧測試 HTTP(服務要先跑起來)
-	@./scripts/smoke.sh
+smoke-device-http: ## 煙霧測試 device-service 的 HTTP API
+	@./scripts/smoke-device-http.sh
 
-smoke-grpc: ## 端到端煙霧測試 gRPC(需要 grpcurl)
-	@./scripts/smoke-grpc.sh
+smoke-device-grpc: ## 煙霧測試 device-service 的 gRPC API(需要 grpcurl)
+	@./scripts/smoke-device-grpc.sh
 
-smoke-telemetry: ## 端到端煙霧測試 telemetry(兩個服務都要跑)
-	@./scripts/smoke-telemetry.sh
+smoke-telemetry-grpc: ## 煙霧測試 telemetry-service(兩個服務都要跑)
+	@./scripts/smoke-telemetry-grpc.sh
 
 lint: ## vet + gofmt 檢查
 	go vet ./...
@@ -45,4 +45,4 @@ proto-breaking: ## 檢查 proto 有沒有破壞相容性的改動
 build: ## 編譯全部
 	go build ./...
 
-.PHONY: help up down db-reset run test test-int smoke smoke-grpc smoke-telemetry lint proto proto-breaking build
+.PHONY: help up down db-reset run test test-int smoke-device-http smoke-device-grpc smoke-telemetry-grpc lint proto proto-breaking build

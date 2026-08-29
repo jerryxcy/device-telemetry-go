@@ -4,7 +4,6 @@ package store
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -13,26 +12,12 @@ import (
 	"github.com/jerryxcy/device-telemetry-go/internal/telemetry"
 )
 
-// 這些測試需要一個真的 PostgreSQL:make up && make test-int
+// 這些測試需要一個真的 PostgreSQL。TestMain 會用 testcontainers 起一個,
+// 資料庫與連線字串見 main_integration_test.go。
 //
 // 之所以不能用假的 Repository:這裡要驗的正是「pgx 與 PostgreSQL 實際怎麼互動」——
 // RETURNING 有沒有真的區分出重複、批次失敗時前面的寫入會不會被回滾。
 // 假物件只會照我們的想像回答。
-
-func testPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://postgres:postgres@localhost:5432/telemetry?sslmode=disable"
-	}
-	ctx := context.Background()
-	pool, err := NewPool(ctx, dsn)
-	if err != nil {
-		t.Skipf("需要 PostgreSQL(make up):%v", err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
-}
 
 // seedDevice 建一台設備並在測試結束時連同讀數一起清掉。
 func seedDevice(t *testing.T, pool *pgxpool.Pool, serial string) {

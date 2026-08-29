@@ -11,7 +11,7 @@
 #   前置:make up、兩個服務都要跑,以及 brew install grpcurl
 #         終端機 A:make run
 #         終端機 B:GRPC_ADDR=:9091 go run ./cmd/telemetry-service
-#   用法:./scripts/smoke-telemetry.sh [http-url] [device-grpc] [telemetry-grpc]
+#   用法:./scripts/smoke-telemetry-grpc.sh [http-url] [device-grpc] [telemetry-grpc]
 #         預設 http://localhost:8080 / localhost:9090 / localhost:9091
 #
 # 全部通過 exit 0,任何一項失敗 exit 1。腳本只碰自己建立的 TSMOKE-* 設備,

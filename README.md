@@ -117,8 +117,8 @@ make test
 跑端到端煙霧測試(服務要先跑起來):
 
 ```bash
-./scripts/smoke.sh                       # 預設打 http://localhost:8080
-./scripts/smoke.sh http://其他位址:8080
+make smoke-device-http
+./scripts/smoke-device-http.sh http://其他位址:8080   # 換位址時直接跑腳本
 ```
 
 它打的是真的 HTTP,所以一次驗證 handler → service → store → PostgreSQL 整條鏈 ——
@@ -128,7 +128,7 @@ make test
 gRPC 介面有另一支:
 
 ```bash
-./scripts/smoke-grpc.sh                  # 預設 http://localhost:8080 與 localhost:9090
+make smoke-device-grpc      # 預設 http://localhost:8080 與 localhost:9090
 ```
 
 它用 HTTP 擺好設備狀態、用 gRPC 查詢,所以同時驗證了兩個 server 共用同一個
@@ -139,12 +139,21 @@ telemetry-service 會把資料庫故障誤判成「這台設備沒註冊」而�
 跨兩個服務的上報流程另有一支(需要 device-service 與 telemetry-service 都在跑):
 
 ```bash
-./scripts/smoke-telemetry.sh
+make smoke-telemetry-grpc
 ```
 
 它驗證的是兩層拒絕的分界:整批的前提不成立(未註冊、已停用)回 gRPC 錯誤碼、
 連 `results` 都沒有;單筆的問題(時鐘跑掉、資料不合法)則是正常回應,結果放在
 對應的 `ReadingResult`,其他筆照常寫入。
+
+`make test-int` 跑的是需要真資料庫的整合測試。它靠 testcontainers 自己起一個乾淨的
+PostgreSQL(用 `migrations/001_init.sql` 建 schema,所以那些測試同時也是 migration
+的回歸測試),跑完就丟。想改成對著 `make up` 起來的資料庫跑就設 `DATABASE_URL`:
+
+```bash
+make test-int                                    # 起容器,乾淨且可重現
+DATABASE_URL=... go test ./... -tags=integration  # 對著既有資料庫,快一點
+```
 
 改了 `proto/` 之後要重新產生 Go 程式碼:
 
@@ -187,5 +196,5 @@ make db-reset
 - [x] 上報准入:未註冊 / Disabled / 時鐘超出區間,三種可區分的拒絕
 - [x] `store.ReadingStore`:`ON CONFLICT DO NOTHING`,並區分「真的寫入」與「被吸收的重送」
       —— 這是 `ACCEPTED` 與 `DUPLICATE` 分得開的前提
-- [ ] repository 層整合測試(testcontainers)—— 涵蓋既有的 `DeviceStore`,它目前 0% 覆蓋
+- [x] repository 層整合測試(testcontainers)—— `DeviceStore` 從 0% 到 83.7%,CI 也跑得動了
 - [x] gRPC 的 request ID:用 metadata 跨服務傳遞,對齊 HTTP 那邊的 `X-Request-ID`
