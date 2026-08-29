@@ -77,7 +77,8 @@ func run() error {
 	// http.Server 那邊設了四個 timeout 防慢速連線,gRPC 對應的旋鈕是
 	// keepalive:閒置與連線壽命的上限,加上偵測死掉的對端。
 	grpcSrv := grpc.NewServer(
-		grpc.ChainUnaryInterceptor(grpcapi.UnaryLogging),
+		// RequestID 必須排在 Logging 之前,後者才讀得到 ID。
+		grpc.ChainUnaryInterceptor(grpcapi.UnaryRequestID, grpcapi.UnaryLogging),
 		grpc.MaxRecvMsgSize(maxRecvMsgSize),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			MaxConnectionIdle: 5 * time.Minute,

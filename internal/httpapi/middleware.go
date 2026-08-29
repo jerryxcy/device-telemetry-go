@@ -2,16 +2,12 @@ package httpapi
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/jerryxcy/device-telemetry-go/internal/reqid"
 )
-
-type ctxKey string
-
-const requestIDKey ctxKey = "request_id"
 
 // statusRecorder 包住 http.ResponseWriter,把 handler 寫出的 status code 記下來。
 //
@@ -27,30 +23,27 @@ func (rec *statusRecorder) WriteHeader(status int) {
 	rec.ResponseWriter.WriteHeader(status)
 }
 
-// RequestID 是「已完成範例」,照著它的形狀寫下一個 middleware。
+// RequestID 沿用上游帶進來的 request ID,沒有就生一個。
 //
 // 三個值得注意的地方:
 //  1. middleware 的型別就是 func(http.Handler) http.Handler,沒有框架魔法
-//  2. 值透過 context 往下傳,key 用自訂型別避免碰撞(所以有 ctxKey)
+//  2. 值透過 context 往下傳,存取都走 reqid 套件 —— 那是這個 process 裡
+//     request ID 的唯一存放處,gRPC 那邊的 interceptor 用的是同一個
 //  3. 回傳的是 http.HandlerFunc,它是個「有 ServeHTTP 方法的函式型別」
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := r.Header.Get("X-Request-ID")
+		id := r.Header.Get(reqid.HeaderKey)
 		if id == "" {
-			b := make([]byte, 8)
-			_, _ = rand.Read(b)
-			id = hex.EncodeToString(b)
+			id = reqid.New()
 		}
-		w.Header().Set("X-Request-ID", id)
-		ctx := context.WithValue(r.Context(), requestIDKey, id)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		w.Header().Set(reqid.HeaderKey, id)
+		next.ServeHTTP(w, r.WithContext(reqid.With(r.Context(), id)))
 	})
 }
 
 // RequestIDFrom 從 context 取出 request ID。
 func RequestIDFrom(ctx context.Context) string {
-	id, _ := ctx.Value(requestIDKey).(string)
-	return id
+	return reqid.From(ctx)
 }
 
 // Logging 記錄每個請求的 method、path、status、耗時。

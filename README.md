@@ -188,4 +188,4 @@ make db-reset
 - [x] `store.ReadingStore`:`ON CONFLICT DO NOTHING`,並區分「真的寫入」與「被吸收的重送」
       —— 這是 `ACCEPTED` 與 `DUPLICATE` 分得開的前提
 - [ ] repository 層整合測試(testcontainers)—— 涵蓋既有的 `DeviceStore`,它目前 0% 覆蓋
-- [ ] gRPC 的 request ID:用 metadata 跨服務傳遞,對齊 HTTP 那邊的 `X-Request-ID`
+- [x] gRPC 的 request ID:用 metadata 跨服務傳遞,對齊 HTTP 那邊的 `X-Request-ID`

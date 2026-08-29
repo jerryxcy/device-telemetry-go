@@ -65,6 +65,9 @@ func run() error {
 	// 不會被誤判成「設備沒註冊」)。
 	conn, err := grpc.NewClient(deviceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		// 把這個請求的 request ID 一起帶去 device-service,
+		// 兩個服務的 log 才串得起來。
+		grpc.WithChainUnaryInterceptor(grpcapi.UnaryRequestIDClient),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                2 * time.Minute,
 			Timeout:             20 * time.Second,
@@ -82,7 +85,8 @@ func run() error {
 	svc := telemetry.NewService(repo, checker)
 
 	grpcSrv := grpc.NewServer(
-		grpc.ChainUnaryInterceptor(grpcapi.UnaryLogging),
+		// RequestID 必須排在 Logging 之前,後者才讀得到 ID。
+		grpc.ChainUnaryInterceptor(grpcapi.UnaryRequestID, grpcapi.UnaryLogging),
 		grpc.MaxRecvMsgSize(maxRecvMsgSize),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			MaxConnectionIdle:     5 * time.Minute,
