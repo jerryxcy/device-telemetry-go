@@ -174,7 +174,9 @@ make load    # 持續打流量 —— 沒有流量的話圖上就是一條平的
 
 六張圖,一半一半。
 
-前三張是任何服務都該有的 RED 指標:HTTP 請求速率、HTTP p95 延遲、gRPC 請求速率(依錯誤碼分)。
+前三張是任何服務都該有的 RED 指標:HTTP 請求速率、HTTP p95 延遲、gRPC 請求速率。
+
+HTTP 那兩張同時依 **method 與 route** 分 —— `GET /devices`(列表)與 `POST /devices`(註冊)是兩件完全不同的事,合在一起看沒有意義。route 用的是路由樣板,所以 `/devices/SN-0001` 與 `/devices/SN-0002` 仍然算同一條線;打不到任何路由的請求(截圖裡的 `PATCH unmatched 405`)則一律歸為 `unmatched`。
 
 後三張是這個平台才有的:
 

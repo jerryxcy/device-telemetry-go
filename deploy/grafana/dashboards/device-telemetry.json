@@ -18,14 +18,14 @@
     {
       "id": 1,
       "type": "timeseries",
-      "title": "HTTP 請求速率(依路由)",
-      "description": "route 是路由樣板而不是實際路徑 —— 所以每台設備不會各自長出一條線。",
+      "title": "HTTP 請求速率(依 method 與路由)",
+      "description": "route 是路由樣板而不是實際路徑 —— 所以每台設備不會各自長出一條線。method 要分開:GET /devices(列表)與 POST /devices(註冊)是兩件事。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 8,
+        "h": 9,
         "w": 12,
         "x": 0,
         "y": 0
@@ -37,8 +37,8 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (route, status) (rate(http_requests_total[1m]))",
-          "legendFormat": "{{route}} {{status}}",
+          "expr": "sum by (method, route, status) (rate(http_requests_total[1m]))",
+          "legendFormat": "{{method}} {{route}} {{status}}",
           "range": true,
           "refId": "A"
         }
@@ -69,14 +69,14 @@
     {
       "id": 2,
       "type": "timeseries",
-      "title": "HTTP p95 延遲(依路由)",
+      "title": "HTTP p95 延遲(依 method 與路由)",
       "description": "從 histogram 的 bucket 算出來的分位數,不是平均值 —— 平均值會把長尾藏起來。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 8,
+        "h": 9,
         "w": 12,
         "x": 12,
         "y": 0
@@ -88,8 +88,8 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(http_request_duration_seconds_bucket[1m])))",
-          "legendFormat": "{{route}}",
+          "expr": "histogram_quantile(0.95, sum by (le, method, route) (rate(http_request_duration_seconds_bucket[1m])))",
+          "legendFormat": "{{method}} {{route}}",
           "range": true,
           "refId": "A"
         }
@@ -130,7 +130,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 8
+        "y": 9
       },
       "targets": [
         {
@@ -181,7 +181,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 8
+        "y": 9
       },
       "targets": [
         {
@@ -243,7 +243,7 @@
         "h": 8,
         "w": 16,
         "x": 0,
-        "y": 17
+        "y": 18
       },
       "targets": [
         {
@@ -298,7 +298,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 17
+        "y": 18
       },
       "targets": [
         {
