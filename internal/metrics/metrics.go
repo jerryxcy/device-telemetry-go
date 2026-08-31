@@ -53,6 +53,16 @@ type Metrics struct {
 
 // New 建立一組指標並完成註冊。
 //
+// 註冊完之後 /metrics 的輸出長這樣 —— 每個指標前面都有兩行中繼資料,
+// 那是 client_golang 依 Help 與型別自動產生的:
+//
+//	# HELP http_request_duration_seconds HTTP 請求耗時(秒)。
+//	# TYPE http_request_duration_seconds histogram
+//	http_request_duration_seconds_bucket{...} 85
+//
+// Prometheus 抓走之後,le 只是另一個普通的 label,它並不知道這是
+// histogram —— 是查詢時的 histogram_quantile 才把那些桶當桶用。
+//
 // Go 與 process 兩個 collector 由 client_golang 提供,給的是 goroutine 數、
 // 記憶體、GC、開檔數這些「服務本身」的狀態 —— 跟業務指標互補。
 func New() *Metrics {
@@ -124,6 +134,27 @@ func (m *Metrics) Registry() *prometheus.Registry {
 }
 
 // HTTPMiddleware 記錄每個請求的次數與耗時。
+//
+// 一個請求走過這裡,會在 /metrics 上變成這樣(真的抓下來的):
+//
+//	http_requests_total{method="POST",route="/devices",status="200"} 86
+//	http_requests_total{method="GET",route="/devices",status="400"} 11
+//	http_requests_total{method="PATCH",route="unmatched",status="405"} 9
+//
+//	http_request_duration_seconds_bucket{method="POST",route="/devices",le="0.005"} 85
+//	http_request_duration_seconds_bucket{method="POST",route="/devices",le="0.01"}  85
+//	  ...(中間十個桶,數字都一樣)
+//	http_request_duration_seconds_bucket{method="POST",route="/devices",le="+Inf"} 86
+//	http_request_duration_seconds_sum{method="POST",route="/devices"}   0.06887658
+//	http_request_duration_seconds_count{method="POST",route="/devices"} 86
+//
+// counter 那行很直觀:這個組合出現過 86 次。histogram 比較不直觀 ——
+// 它不存個別耗時,只存「≤ 某個秒數的有幾筆」,而且是**累計**的,所以
+// le 越大數字越大,+Inf 那個就是總數。上面 85 對 86 的差,是有一筆超過
+// 10 秒?不是 —— 是有一筆落在 0.005 到 +Inf 之間的某個桶裡。
+//
+// 一個 histogram 因此展開成 14 條 series(12 個桶 + sum + count),
+// 這也是為什麼 histogram 的 label 特別貴。
 //
 // route label 用的是**路由樣板**而不是實際路徑 —— /devices/SN-0001 與
 // /devices/SN-0002 必須算同一條 series,否則設備一多就是 cardinality 爆炸。
@@ -208,6 +239,17 @@ func (rec *statusRecorder) WriteHeader(status int) {
 
 // UnaryServerInterceptor 記錄本服務處理的每個 unary RPC。
 //
+// telemetry-service 上抓下來的實際內容:
+//
+//	grpc_server_requests_total{code="OK",method="/telemetry.v1.TelemetryService/SubmitReadings"}                 45
+//	grpc_server_requests_total{code="FailedPrecondition",method="/telemetry.v1.TelemetryService/SubmitReadings"} 18
+//	grpc_server_requests_total{code="PermissionDenied",method="/telemetry.v1.TelemetryService/SubmitReadings"}    9
+//	grpc_server_requests_total{code="InvalidArgument",method="/telemetry.v1.TelemetryService/SubmitReadings"}     9
+//
+// 這四個 code 對得上 submitError 的四個分支:沒註冊、已停用、serial 不合法、
+// 其餘正常。注意 OK 的 45 筆裡面仍然可能有逐筆被拒的讀數 —— 那是整批成功、
+// 個別失敗,計數在 CountReading 那邊。
+//
 // 對應 HTTP 那邊的 HTTPMiddleware,但簡單得多:gRPC 的結果是回傳值,
 // 直接就拿得到,不需要 statusRecorder。
 func (m *Metrics) UnaryServerInterceptor(
@@ -235,6 +277,16 @@ func (m *Metrics) UnaryServerInterceptor(
 
 // UnaryClientInterceptor 記錄本服務**發出**的每個 unary RPC。
 //
+// 同一次呼叫在兩個服務上各留下一筆,名字不同:
+//
+//	telemetry-service :8081/metrics
+//	  grpc_client_requests_total{code="OK",method="/device.v1.DeviceService/CheckEligibility"} 63
+//
+//	device-service :8080/metrics
+//	  grpc_server_requests_total{code="OK",method="/device.v1.DeviceService/CheckEligibility"} 63
+//
+// 次數一樣(沒掉封包),但耗時不會一樣 —— 這正是重點,見下面。
+//
 // 這是跨服務問題能分辨的那一半:同一次呼叫,呼叫端量到的耗時包含網路與排隊,
 // 被呼叫端量到的只有自己處理的時間。兩者的差距就是「下游慢」與「自己慢」的分界。
 func (m *Metrics) UnaryClientInterceptor(
@@ -260,6 +312,16 @@ func (m *Metrics) UnaryClientInterceptor(
 }
 
 // CountReading 累加一筆讀數的處理結果。
+//
+// 跑一輪 smoke test 之後 telemetry-service 上長這樣:
+//
+//	telemetry_readings_total{status="accepted"}           36
+//	telemetry_readings_total{status="duplicate"}          27
+//	telemetry_readings_total{status="clock_out_of_range"} 18
+//	telemetry_readings_total{status="invalid"}            18
+//
+// duplicate 佔 27/99 ≈ 27% —— 那是冪等寫入實際擋下的重送。這個數字
+// 本來只能翻 log 一筆一筆數,現在是一條可以畫成圖的線。
 //
 // status 直接吃 telemetry.Status.String() 的輸出(accepted、duplicate、
 // clock_out_of_range、invalid)—— 那已經是 label 的形狀,不需要另一張對應表。

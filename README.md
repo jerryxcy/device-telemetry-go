@@ -172,16 +172,22 @@ make load    # 持續打流量 —— 沒有流量的話圖上就是一條平的
 
 ![Grafana 的 Device Telemetry 儀表板](./docs/images/grafana.png)
 
-六張圖,一半一半。
+七張圖,依服務分成三組 —— 混在一起看不出誰是誰。
 
-前三張是任何服務都該有的 RED 指標:HTTP 請求速率、HTTP p95 延遲、gRPC 請求速率。
+**device-service —— 對人的 HTTP 介面**
 
-HTTP 那兩張同時依 **method 與 route** 分 —— `GET /devices`(列表)與 `POST /devices`(註冊)是兩件完全不同的事,合在一起看沒有意義。route 用的是路由樣板,所以 `/devices/SN-0001` 與 `/devices/SN-0002` 仍然算同一條線;打不到任何路由的請求(截圖裡的 `PATCH unmatched 405`)則一律歸為 `unmatched`。
+請求速率與 p95 延遲,都依 **method 與 route** 分。`GET /devices`(列表)與 `POST /devices`(註冊)是兩件完全不同的事,合在一起看沒有意義。route 用的是路由樣板,所以 `/devices/SN-0001` 與 `/devices/SN-0002` 仍算同一條線;打不到任何路由的請求(截圖裡的 `PATCH unmatched 405`)則一律歸為 `unmatched`。
 
-後三張是這個平台才有的:
+**telemetry-service —— 設備上報**
+
+`SubmitReadings` 的錯誤碼分布,加上兩張這個平台才有的:
 
 - **讀數處理結果** 與 **Duplicate 佔比** —— 冪等機制實際擋下多少重送。截圖裡是 27.3%,因為 `make load` 會反覆送同一批讀數。設備重試越積極這個數字越高,而這件事本來只能翻 log 才知道。
-- **跨服務這一跳** —— 同一個 `CheckEligibility`,在呼叫端與被呼叫端各量一次。兩條線的差距就是網路與排隊的成本,能分辨「下游慢」還是「中間慢」。(本機跑的話兩條線會疊在一起 —— 延遲太低,落在同一個 histogram 桶裡。)
+- 注意 gRPC 的 `OK` 與逐筆結果是兩層:整批被收下(`OK`)之後,個別讀數仍可能是 `duplicate` 或被拒。錯誤碼那張看的是前者,讀數處理結果看的是後者。
+
+**跨服務這一跳**
+
+同一個 `CheckEligibility`,在呼叫端與被呼叫端各量一次。兩條線的差距就是網路與排隊的成本,能分辨「下游慢」還是「中間慢」。(本機跑的話兩條會疊在一起 —— 延遲太低,落在同一個 histogram 桶裡。)
 
 `make load` 用的是現成的 smoke script,裡面本來就會刻意打出未註冊、已停用、時鐘跑掉這些案例,所以錯誤碼的分布和 duplicate 的比例自然就有東西看。
 

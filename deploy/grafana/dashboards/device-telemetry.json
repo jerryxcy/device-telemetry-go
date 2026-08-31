@@ -1,7 +1,7 @@
 {
   "uid": "device-telemetry",
   "title": "Device Telemetry",
-  "description": "兩個服務的 RED 指標,加上這個平台特有的冪等與跨服務指標。",
+  "description": "依服務分組:device-service 的 HTTP、telemetry-service 的上報,以及兩者之間那一跳。",
   "tags": [
     "device-telemetry"
   ],
@@ -16,10 +16,22 @@
   },
   "panels": [
     {
+      "type": "row",
+      "title": "device-service —— 對人的 HTTP 介面",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
       "id": 1,
       "type": "timeseries",
       "title": "HTTP 請求速率(依 method 與路由)",
-      "description": "route 是路由樣板而不是實際路徑 —— 所以每台設備不會各自長出一條線。method 要分開:GET /devices(列表)與 POST /devices(註冊)是兩件事。",
+      "description": "route 是路由樣板而不是實際路徑,所以每台設備不會各自長出一條線。method 要分開:GET /devices(列表)與 POST /devices(註冊)是兩件事。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -28,7 +40,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "targets": [
         {
@@ -37,7 +49,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (method, route, status) (rate(http_requests_total[1m]))",
+          "expr": "sum by (method, route, status) (rate(http_requests_total{service=\"device-service\"}[1m]))",
           "legendFormat": "{{method}} {{route}} {{status}}",
           "range": true,
           "refId": "A"
@@ -70,7 +82,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "HTTP p95 延遲(依 method 與路由)",
-      "description": "從 histogram 的 bucket 算出來的分位數,不是平均值 —— 平均值會把長尾藏起來。",
+      "description": "從 histogram 的桶反推的估計值,不是排序後取第 95 個 —— Prometheus 沒有存個別耗時。本機延遲全部落在第一個桶(≤5ms),所以這條線是插出來的 4.75ms。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -79,7 +91,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 0
+        "y": 1
       },
       "targets": [
         {
@@ -88,7 +100,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le, method, route) (rate(http_request_duration_seconds_bucket[1m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, method, route) (rate(http_request_duration_seconds_bucket{service=\"device-service\"}[1m])))",
           "legendFormat": "{{method}} {{route}}",
           "range": true,
           "refId": "A"
@@ -118,19 +130,31 @@
       }
     },
     {
+      "type": "row",
+      "title": "telemetry-service —— 設備上報",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "panels": []
+    },
+    {
       "id": 3,
       "type": "timeseries",
-      "title": "gRPC 請求速率(依 method 與 code)",
-      "description": "code 不是 OK 的線就是失敗。兩個服務的 RPC 都在這裡 —— 每個服務目前各只有一支 method,所以圖例只標服務與錯誤碼。",
+      "title": "SubmitReadings 速率(依 code)",
+      "description": "整批被拒才會有錯誤碼:FailedPrecondition 是沒註冊,PermissionDenied 是已停用,InvalidArgument 是 serial 本身不合法。逐筆的問題走 OK 加下面那張圖。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 9,
-        "w": 12,
+        "h": 8,
+        "w": 8,
         "x": 0,
-        "y": 9
+        "y": 11
       },
       "targets": [
         {
@@ -139,8 +163,8 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (service, method, code) (rate(grpc_server_requests_total[1m]))",
-          "legendFormat": "{{service}} · {{code}}",
+          "expr": "sum by (code) (rate(grpc_server_requests_total{service=\"telemetry-service\"}[1m]))",
+          "legendFormat": "{{code}}",
           "range": true,
           "refId": "A"
         }
@@ -171,79 +195,17 @@
     {
       "id": 4,
       "type": "timeseries",
-      "title": "跨服務這一跳:呼叫端 vs 被呼叫端 p95",
-      "description": "同一次 CheckEligibility。兩條線的差距是網路與排隊 —— 呼叫端變慢但被呼叫端沒變,問題就不在 device-service 裡面。",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 9
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(grpc_client_request_duration_seconds_bucket[1m])))",
-          "legendFormat": "telemetry-service 看到的",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(grpc_server_request_duration_seconds_bucket{service=\"device-service\"}[1m])))",
-          "legendFormat": "device-service 自己處理的",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 10,
-            "showPoints": "never"
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 5,
-      "type": "timeseries",
-      "title": "讀數處理結果",
-      "description": "accepted 是新寫入,duplicate 是冪等機制擋下的重送。clock_out_of_range 與 invalid 是逐筆被拒的。",
+      "title": "讀數處理結果(逐筆)",
+      "description": "accepted 是新寫入,duplicate 是冪等擋下的重送,另外兩個是逐筆被拒的。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "h": 8,
-        "w": 16,
-        "x": 0,
-        "y": 18
+        "w": 8,
+        "x": 8,
+        "y": 11
       },
       "targets": [
         {
@@ -286,10 +248,10 @@
       }
     },
     {
-      "id": 6,
+      "id": 5,
       "type": "stat",
       "title": "Duplicate 佔比(5 分鐘)",
-      "description": "重送在整體讀數裡的比例。設備重試越積極,這個數字越高 —— 冪等寫入擋掉的就是這些。",
+      "description": "重送在整體讀數裡的比例。設備重試越積極這個數字越高 —— 冪等寫入擋掉的就是這些。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -298,7 +260,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 18
+        "y": 11
       },
       "targets": [
         {
@@ -345,6 +307,131 @@
           "values": false
         },
         "textMode": "auto"
+      }
+    },
+    {
+      "type": "row",
+      "title": "跨服務這一跳 —— telemetry-service → device-service",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "panels": []
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "CheckEligibility 速率(device-service 收到的)",
+      "description": "每寫入一批讀數之前,telemetry-service 都會先問這一支。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (code) (rate(grpc_server_requests_total{service=\"device-service\"}[1m]))",
+          "legendFormat": "{{code}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "CheckEligibility p95:呼叫端 vs 被呼叫端",
+      "description": "同一次呼叫,兩端各量一次。呼叫端含網路與排隊,被呼叫端只有自己處理的時間 —— 兩條線的差距就是「下游慢」與「中間慢」的分界。本機延遲太低,兩條會疊在一起。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(grpc_client_request_duration_seconds_bucket[1m])))",
+          "legendFormat": "telemetry-service 看到的",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(grpc_server_request_duration_seconds_bucket{service=\"device-service\"}[1m])))",
+          "legendFormat": "device-service 自己處理的",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     }
   ]
