@@ -25,12 +25,11 @@ db: ## 只起 postgres,給 run-device / run-telemetry 當後盾
 down: ## 關掉所有容器(up 與 db 都用這個收工)
 	docker compose down
 
-db-reset: ## 只砍掉 DB volume 重建(改了 migrations 之後要跑)
-	docker compose down
-	@# 只刪 pgdata。用 down -v 的話會連 Prometheus 的歷史與 Grafana 的
-	@# 狀態一起砍掉 —— 那跟「重建資料庫」是兩回事。
-	docker volume rm -f "$$(docker compose config --format json | \
-		python3 -c 'import sys,json; print(json.load(sys.stdin)["name"])')_pgdata"
+reset: ## 砍掉全部 volume 重新來過 —— DB、Prometheus 歷史、Grafana 的臨時調整都會沒
+	@# -v 砍的是這個 compose 專案的所有 volume,不只 pgdata。
+	@# 改了 migrations 之後必須跑:那些 SQL 只在資料目錄是空的時候才會執行。
+	@# Grafana 的 dashboard 是 provisioning 的,會從 deploy/ 重新載入,不會真的不見。
+	docker compose down -v
 	docker compose up -d postgres
 
 run-device: db ## 本機跑 device-service(HTTP :8080 / gRPC :9090)
@@ -80,4 +79,4 @@ proto-breaking: ## 檢查 proto 有沒有破壞相容性的改動
 build: ## 編譯全部
 	go build ./...
 
-.PHONY: help up db down db-reset run-device run-telemetry load test test-int smoke-device-http smoke-device-grpc smoke-telemetry-grpc lint proto proto-breaking build
+.PHONY: help up db down reset run-device run-telemetry load test test-int smoke-device-http smoke-device-grpc smoke-telemetry-grpc lint proto proto-breaking build

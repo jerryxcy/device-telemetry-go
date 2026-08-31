@@ -313,6 +313,8 @@ flowchart TB
 
 實作上 HTTP 是 middleware(`func(http.Handler) http.Handler`)、gRPC 是 interceptor,形狀不同但概念一樣。共用的 context key 放在 `internal/reqid` —— device-service 同時跑兩種協定,兩邊各自定義 key 的話會變成兩個互不相通的「request ID」。
 
+`/metrics` 是例外,不記 log:Prometheus 每 5 秒抓一次,那些不是值得留下的請求,只會把真正的流量洗掉。telemetry-service 的管理面基於同樣的理由,整個就不掛 `RequestID` 與 `Logging`。同一條規則,兩種做法 —— device-service 的 `/metrics` 跟業務路由在同一個 mux 上,只能逐條排除。
+
 ### 7.2 指標
 
 `internal/metrics` 是這個 process 裡指標的唯一存放處,地位比照 `internal/reqid`。它持有自己的 registry(不用 client_golang 的 default registry —— 那是全域狀態,測試之間會互相污染),以及三個收集點與一個暴露點:
@@ -342,11 +344,19 @@ flowchart TB
 
 **client 與 server 各量一次同一個 RPC**。telemetry-service 量到的 `CheckEligibility` 耗時包含網路與排隊,device-service 量到的只有它自己處理的時間。兩者的差距,就是「下游慢」與「中間慢」的分界 —— 只量一邊做不到這件事。
 
-### 7.3 兩個踩得到的坑
+### 7.3 四個踩得到的坑
 
-**route label 必須是路由樣板。**用 `r.URL.Path` 的話,`/devices/SN-0001` 與 `/devices/SN-0002` 是兩條不同的 time series,設備一多就是 cardinality 爆炸,而且是安靜地爆:Prometheus 不會抱怨,只會越來越慢、越吃記憶體。所以用 `r.Pattern`(ServeMux 比對出來的樣板),沒對到路由時一律歸為 `unmatched`。
+前兩個關於 cardinality。**label 的值只要是外部說了算的,就是一個攻擊面** —— Prometheus 不會拒絕新的 series,只會默默地越長越多、越查越慢。
+
+**route label 必須是路由樣板。**用 `r.URL.Path` 的話,`/devices/SN-0001` 與 `/devices/SN-0002` 是兩條不同的 time series,設備一多就是爆炸,而且是安靜地爆:Prometheus 不會抱怨,只會越來越慢、越吃記憶體。所以用 `r.Pattern`(ServeMux 比對出來的樣板),沒對到路由時一律歸為 `unmatched`。
+
+**method label 必須收斂到已知的集合。**`r.Method` 同樣是客戶端說了算的 —— net/http 接受任何合法的 token,所以遠端用亂編的動詞打幾次,就能替我們生出幾條新的 series。跟 route 是同一個問題的另一個入口,只是比較不明顯。九個標準動詞照原樣留著,其餘一律記成 `other`。
+
+後兩個關於「什麼時候記」。
 
 **指標的 middleware 必須是 chain 的最內層。**`r.Pattern` 是 ServeMux 在 `ServeHTTP` 裡比對出樣板後,**就地寫回同一個 `*http.Request`** 的;而 `RequestID` 用 `r.WithContext` 產生的是一份**複本**。排在 `RequestID` 外面的話,拿到的是複本以外那個原始 request,`Pattern` 永遠是空字串 —— 所有流量都會被歸成 `unmatched`,程式不會報錯,只是資料默默是錯的。同理,樣板要在 `next.ServeHTTP` 回來之後才讀得到。
+
+**記錄要用 `defer`,否則 panic 的請求會從指標上消失。**寫在 `next.ServeHTTP` 後面的話,handler 一 panic 就整段跳過 —— 連「發生過一次請求」都不會留下。而 panic 正是最需要被看見的情況。HTTP 那邊用一個 `completed` 旗標分辨:沒走到最後一行就代表在展開 panic,狀態記成 500;gRPC 則是把 code 的初始值設成 `Internal`,正常返回時才覆蓋掉。
 
 ### 7.4 領域層不知道 Prometheus
 

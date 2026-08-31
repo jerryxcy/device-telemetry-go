@@ -207,7 +207,7 @@ make down
 | `make test` | 單元測試(不需要資料庫,約兩秒) |
 | `make test-int` | 整合測試(testcontainers 自己起資料庫) |
 | `make lint` | `go vet` + `gofmt` 檢查 |
-| `make db-reset` | 砍掉 DB volume 重建(改了 `migrations/` 之後要跑) |
+| `make reset` | 砍掉全部 volume 重新來過(改了 `migrations/` 之後要跑) |
 | `make proto` | 改了 `.proto` 之後重新產生 Go 程式碼 |
 
 ### 兩種跑法,不能同時用
