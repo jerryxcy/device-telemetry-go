@@ -128,13 +128,59 @@ telemetry-service 對外只有 gRPC,但指標與探活走 HTTP,所以它另外�
 
 ---
 
+## 監控
+
+```bash
+make up     # 用容器起全部五個:postgres、兩個服務、Prometheus、Grafana
+make load   # 持續打流量,圖上才有東西(Ctrl-C 停)
+make down   # 收工
+```
+
+Grafana 在 <http://localhost:3000>,dashboard 已經 provisioning 好,直接看。
+Prometheus 在 <http://localhost:9092>,**Status → Targets** 看得到抓取狀態。
+
+Prometheus 用 `static_configs` 把兩個 target 寫死在
+[deploy/prometheus.yml](./deploy/prometheus.yml) —— 這跟 k8s 沒有關係。
+k8s 換掉的只是 target 從哪裡發現(service discovery),抓取方式、指標模型
+與查詢語言完全一樣。
+
+Grafana 的 datasource 與 dashboard 都是檔案,在 [deploy/grafana/](./deploy/grafana/)。
+手點出來的設定不會進版控,換一台機器就沒了。
+
+### 指標
+
+| 名稱 | 型別 | Labels |
+|---|---|---|
+| `http_requests_total` | Counter | `method`, `route`, `status` |
+| `http_request_duration_seconds` | Histogram | `method`, `route` |
+| `grpc_server_requests_total` | Counter | `method`, `code` |
+| `grpc_server_request_duration_seconds` | Histogram | `method` |
+| `grpc_client_requests_total` | Counter | `method`, `code` |
+| `grpc_client_request_duration_seconds` | Histogram | `method` |
+| `telemetry_readings_total` | Counter | `status` |
+
+前六個是通用的 RED 指標。真正屬於這個平台的是最後一個與 client 那一組:
+
+- **`telemetry_readings_total{status="duplicate"}`** —— 冪等機制實際擋下多少重送。
+  設備重試越積極這個比例越高,而這件事本來只能翻 log 才知道。
+- **client 與 server 各量一次同一個 RPC** —— telemetry-service 量到的耗時含網路
+  與排隊,device-service 量到的只有它自己處理的時間。兩條線的差距,就是
+  「下游慢」與「中間慢」的分界。
+
+`route` 用的是路由樣板(`/devices/{serial}`)而不是實際路徑。用實際路徑的話,
+每台設備都會長出自己的 time series —— 設備一多就是 cardinality 爆炸,而且是
+安靜地爆。
+
+---
+
 ## 開發與測試
 
 `make help` 會列出所有指令。
 
 | 指令 | 做什麼 |
 |---|---|
-| `make up` / `make down` | 起 / 關 PostgreSQL |
+| `make up` / `make down` | 用容器起 / 關全部五個服務 |
+| `make db` | 只起 PostgreSQL,給 `make run-*` 用 |
 | `make run-device` / `make run-telemetry` | 本機跑兩個服務(各開一個終端機) |
 | `make test` | 單元測試(不需要資料庫,約兩秒) |
 | `make test-int` | 整合測試(testcontainers 自己起資料庫) |
@@ -158,7 +204,7 @@ telemetry-service 對外只有 gRPC,但指標與探活走 HTTP,所以它另外�
 
 整合測試靠 [testcontainers](https://golang.testcontainers.org/) 起一個乾淨的 PostgreSQL,
 並且**用 `migrations/001_init.sql` 建 schema** —— 所以它同時也是 migration 的回歸測試。
-想改成對著 `make up` 起來的資料庫跑(快一點)就設 `DATABASE_URL`。
+想改成對著 `make db` 起來的資料庫跑(快一點)就設 `DATABASE_URL`。
 
 ### 改 `.proto` 才需要的工具
 
@@ -191,11 +237,13 @@ internal/             只有這個 module 能 import —— Go 編譯器層級�
   grpcapi/              【傳輸】gRPC server 實作與 interceptor
   deviceclient/         【傳輸】device-service 的 gRPC client
   reqid/                request ID 在 context 裡的唯一存放處
+  metrics/              Prometheus 指標在這個 process 裡的唯一存放處
 
 proto/                服務間契約的唯一來源
 gen/                  由 proto/ 產生,不要手改(下次 make proto 會覆蓋)
 migrations/           資料庫 schema,docker-compose 在首次啟動時執行
 scripts/              端到端 smoke test
+deploy/               Prometheus 設定與 Grafana 的 provisioning
 docs/adr/             關鍵設計決策與它們的理由
 ```
 

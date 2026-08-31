@@ -1,0 +1,10 @@
+# 告訴 Grafana 去哪個目錄找 dashboard 的 JSON。
+apiVersion: 1
+
+providers:
+  - name: device-telemetry
+    type: file
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

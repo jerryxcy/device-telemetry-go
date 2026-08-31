@@ -1,0 +1,11 @@
+# Grafana 的 datasource 用檔案 provisioning,不靠手動點設定 ——
+# 手點的東西不會進版控,換一台機器就沒了。
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true

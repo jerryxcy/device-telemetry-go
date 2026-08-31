@@ -1,0 +1,28 @@
+# scrape_interval 5s 是為了學習:改了程式碼打幾個請求,圖上馬上看得到。
+# 正式環境通常是 15s 到 60s —— 抓得越密,儲存與查詢的成本越高。
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+# static_configs 就是「target 寫死在設定檔裡」。
+#
+# 這是 Prometheus 最原始的用法,跟 k8s 沒有關係 —— k8s 只是換成
+# kubernetes_sd_configs 去 API server 問有哪些 pod,抓取方式、指標模型
+# 與查詢語言完全一樣。
+scrape_configs:
+  - job_name: device-service
+    static_configs:
+      - targets: ["device-service:8080"]
+        labels:
+          service: device-service
+
+  - job_name: telemetry-service
+    static_configs:
+      # telemetry-service 對外只有 gRPC,指標在管理面那個 port。
+      - targets: ["telemetry-service:8081"]
+        labels:
+          service: telemetry-service
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
