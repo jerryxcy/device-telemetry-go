@@ -14,17 +14,28 @@ import (
 	"github.com/jerryxcy/device-telemetry-go/internal/telemetry"
 )
 
+// ReadingCounter 是這一層對指標的需求:把逐筆讀數的處理結果記出去。
+//
+// 定義在使用端,實作在 metrics 套件。計數放在這裡而不是 telemetry 套件,
+// 是因為這一層本來就在做「domain 結果 → 對外表示」的翻譯 ——
+// 多一個「domain 結果 → metric」是同一個地位的工作,領域層仍然
+// 不知道 HTTP、不知道 SQL、也不知道 Prometheus。
+type ReadingCounter interface {
+	CountReading(status string)
+}
+
 // TelemetryServer 實作 telemetryv1.TelemetryServiceServer。
 type TelemetryServer struct {
 	telemetryv1.UnimplementedTelemetryServiceServer
 
-	svc *telemetry.Service
+	svc     *telemetry.Service
+	counter ReadingCounter
 }
 
 var _ telemetryv1.TelemetryServiceServer = (*TelemetryServer)(nil)
 
-func NewTelemetryServer(svc *telemetry.Service) *TelemetryServer {
-	return &TelemetryServer{svc: svc}
+func NewTelemetryServer(svc *telemetry.Service, counter ReadingCounter) *TelemetryServer {
+	return &TelemetryServer{svc: svc, counter: counter}
 }
 
 // SubmitReadings 收下一批讀數,逐筆回報結果。
@@ -53,6 +64,9 @@ func (s *TelemetryServer) SubmitReadings(
 
 	results := make([]*telemetryv1.ReadingResult, len(outcomes))
 	for i, o := range outcomes {
+		// Status.String() 產生的就是 label 的形狀(accepted、duplicate、
+		// clock_out_of_range、invalid),不需要另一張對應表。
+		s.counter.CountReading(o.Status.String())
 		results[i] = &telemetryv1.ReadingResult{
 			Index:   int32(i),
 			Status:  readingStatus(o.Status),

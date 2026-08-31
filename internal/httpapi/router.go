@@ -13,13 +13,23 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-type Handler struct {
-	svc *device.Service
-	db  Pinger
+// Metrics 是 handler 層對指標的需求:一個收集用的 middleware,
+// 加一個給 Prometheus 抓取的 handler。
+//
+// 跟 Pinger 一樣定義在使用端 —— httpapi 因此完全不必 import metrics 套件。
+type Metrics interface {
+	HTTPMiddleware(next http.Handler) http.Handler
+	Handler() http.Handler
 }
 
-func NewHandler(svc *device.Service, db Pinger) *Handler {
-	return &Handler{svc: svc, db: db}
+type Handler struct {
+	svc     *device.Service
+	db      Pinger
+	metrics Metrics
+}
+
+func NewHandler(svc *device.Service, db Pinger, metrics Metrics) *Handler {
+	return &Handler{svc: svc, db: db, metrics: metrics}
 }
 
 // Routes 已完成。注意 Go 1.22 之後 ServeMux 直接支援 method 與路徑參數,
@@ -31,6 +41,7 @@ func (h *Handler) Routes() http.Handler {
 
 	mux.HandleFunc("GET /healthz", h.healthz)
 	mux.HandleFunc("GET /readyz", h.readyz)
+	mux.Handle("GET /metrics", h.metrics.Handler())
 
 	mux.HandleFunc("POST /devices", h.registerDevice)
 	mux.HandleFunc("GET /devices", h.listDevices)
@@ -38,7 +49,12 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("PUT /devices/{serial}", h.updateDevice)
 	mux.HandleFunc("DELETE /devices/{serial}", h.deleteDevice)
 
-	return Chain(mux, RequestID, Logging)
+	// 指標的 middleware 必須是最內層,直接包住 mux。
+	//
+	// 它要讀的 r.Pattern 是 ServeMux 在比對出路由後,就地寫回那個
+	// *http.Request 的。而 RequestID 用 r.WithContext 產生的是一份**複本** ——
+	// 排在它外面的話,拿到的會是複本以外的那個原始 request,Pattern 永遠是空的。
+	return Chain(mux, RequestID, Logging, h.metrics.HTTPMiddleware)
 }
 
 // healthz 是 liveness:process 還活著就回 200。已完成。

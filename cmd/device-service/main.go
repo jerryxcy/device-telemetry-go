@@ -24,6 +24,7 @@ import (
 	"github.com/jerryxcy/device-telemetry-go/internal/device"
 	"github.com/jerryxcy/device-telemetry-go/internal/grpcapi"
 	"github.com/jerryxcy/device-telemetry-go/internal/httpapi"
+	"github.com/jerryxcy/device-telemetry-go/internal/metrics"
 	"github.com/jerryxcy/device-telemetry-go/internal/store"
 )
 
@@ -64,10 +65,11 @@ func run() error {
 	// 依賴由外往內注入:main 組裝一切,內層只認得 interface。
 	repo := store.NewDeviceStore(pool)
 	svc := device.NewService(repo)
+	m := metrics.New()
 
 	httpSrv := &http.Server{
 		Addr:              httpAddr,
-		Handler:           httpapi.NewHandler(svc, pool).Routes(),
+		Handler:           httpapi.NewHandler(svc, pool, m).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -78,7 +80,7 @@ func run() error {
 	// keepalive:閒置與連線壽命的上限,加上偵測死掉的對端。
 	grpcSrv := grpc.NewServer(
 		// RequestID 必須排在 Logging 之前,後者才讀得到 ID。
-		grpc.ChainUnaryInterceptor(grpcapi.UnaryRequestID, grpcapi.UnaryLogging),
+		grpc.ChainUnaryInterceptor(grpcapi.UnaryRequestID, grpcapi.UnaryLogging, m.UnaryServerInterceptor),
 		grpc.MaxRecvMsgSize(maxRecvMsgSize),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			MaxConnectionIdle: 5 * time.Minute,

@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,6 +25,7 @@ import (
 	telemetryv1 "github.com/jerryxcy/device-telemetry-go/gen/telemetry/v1"
 	"github.com/jerryxcy/device-telemetry-go/internal/deviceclient"
 	"github.com/jerryxcy/device-telemetry-go/internal/grpcapi"
+	"github.com/jerryxcy/device-telemetry-go/internal/metrics"
 	"github.com/jerryxcy/device-telemetry-go/internal/store"
 	"github.com/jerryxcy/device-telemetry-go/internal/telemetry"
 )
@@ -52,6 +55,9 @@ func run() error {
 	dsn := env("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/telemetry?sslmode=disable")
 	grpcAddr := env("GRPC_ADDR", ":9091")
 	deviceAddr := env("DEVICE_GRPC_ADDR", "localhost:9090")
+	// 這個服務對外只有 gRPC,但指標與探活得走 HTTP —— 純 gRPC 的服務
+	// 仍然需要一個 HTTP 的管理面,這是常態而不是將就。
+	adminAddr := env("METRICS_ADDR", ":8081")
 
 	pool, err := store.NewPool(ctx, dsn)
 	if err != nil {
@@ -63,11 +69,17 @@ func run() error {
 	// 第一次 RPC 才真的撥號。所以 device-service 還沒起來也不會擋住啟動,
 	// 只是那段期間的 CheckEligibility 會失敗(而失敗代表「問不到答案」,
 	// 不會被誤判成「設備沒註冊」)。
+	m := metrics.New()
+
 	conn, err := grpc.NewClient(deviceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		// 把這個請求的 request ID 一起帶去 device-service,
 		// 兩個服務的 log 才串得起來。
-		grpc.WithChainUnaryInterceptor(grpcapi.UnaryRequestIDClient),
+		//
+		// client 端的指標也在這裡:同一次呼叫,這邊量到的耗時含網路與排隊,
+		// device-service 那邊量到的只有它自己處理的時間。兩者的差距,
+		// 就是「下游慢」與「中間慢」的分界。
+		grpc.WithChainUnaryInterceptor(grpcapi.UnaryRequestIDClient, m.UnaryClientInterceptor),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                2 * time.Minute,
 			Timeout:             20 * time.Second,
@@ -86,7 +98,7 @@ func run() error {
 
 	grpcSrv := grpc.NewServer(
 		// RequestID 必須排在 Logging 之前,後者才讀得到 ID。
-		grpc.ChainUnaryInterceptor(grpcapi.UnaryRequestID, grpcapi.UnaryLogging),
+		grpc.ChainUnaryInterceptor(grpcapi.UnaryRequestID, grpcapi.UnaryLogging, m.UnaryServerInterceptor),
 		grpc.MaxRecvMsgSize(maxRecvMsgSize),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			MaxConnectionIdle:     5 * time.Minute,
@@ -96,7 +108,7 @@ func run() error {
 			Timeout:               20 * time.Second,
 		}),
 	)
-	telemetryv1.RegisterTelemetryServiceServer(grpcSrv, grpcapi.NewTelemetryServer(svc))
+	telemetryv1.RegisterTelemetryServiceServer(grpcSrv, grpcapi.NewTelemetryServer(svc, m))
 	reflection.Register(grpcSrv)
 
 	// 監聽在 goroutine 之外做,否則位址被占用時 server 只會安靜地沒起來。
@@ -105,11 +117,38 @@ func run() error {
 		return fmt.Errorf("listen grpc %s: %w", grpcAddr, err)
 	}
 
-	errCh := make(chan error, 1)
+	// 管理面只有 /metrics 與 /healthz,沒有業務路由,所以不掛
+	// RequestID / Logging —— 每 5 秒一次的 scrape 不值得產生 log。
+	adminMux := http.NewServeMux()
+	adminMux.Handle("GET "+metrics.MetricsPath, m.Handler())
+	adminMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	adminSrv := &http.Server{
+		Addr:              adminAddr,
+		Handler:           adminMux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	// 緩衝 2:兩個 server 都可能寫入。沒有緩衝的話,先關掉的那邊會讓
+	// 另一個 goroutine 永遠卡在送出而洩漏。
+	errCh := make(chan error, 2)
+
 	go func() {
 		slog.Info("telemetry-service listening", "addr", grpcAddr, "device_service", deviceAddr)
 		if err := grpcSrv.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 			errCh <- fmt.Errorf("grpc: %w", err)
+		}
+	}()
+
+	go func() {
+		slog.Info("admin listening", "addr", adminAddr)
+		if err := adminSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("admin http: %w", err)
 		}
 	}()
 
@@ -122,8 +161,25 @@ func run() error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	stopGRPC(shutdownCtx, grpcSrv)
-	return nil
+
+	// 兩個 server 並行關閉 —— 依序關的話 gRPC 若用掉整份預算,
+	// admin 拿到的就是已經過期的 ctx,比照 device-service 的做法。
+	var (
+		wg       sync.WaitGroup
+		adminErr error
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		stopGRPC(shutdownCtx, grpcSrv)
+	}()
+	go func() {
+		defer wg.Done()
+		adminErr = adminSrv.Shutdown(shutdownCtx)
+	}()
+	wg.Wait()
+
+	return adminErr
 }
 
 // stopGRPC 優雅關閉 gRPC server。

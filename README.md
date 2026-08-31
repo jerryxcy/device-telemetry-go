@@ -10,8 +10,8 @@ device-service 確認這台設備有沒有資格上報。
 **錯誤處理**(哪些是答案、哪些是失敗),以及**重送情境下的寫入冪等性**
 (設備會重試,平台不能因此長出重複資料)。
 
-用到的東西幾乎都是標準庫,加上兩個套件:`net/http`、`log/slog`、`pgx`、`grpc`。
-沒有 web 框架、沒有 ORM、沒有 DI 容器。
+用到的東西幾乎都是標準庫,加上三個套件:`net/http`、`log/slog`、`pgx`、`grpc`、
+`prometheus/client_golang`。沒有 web 框架、沒有 ORM、沒有 DI 容器。
 
 ---
 
@@ -59,6 +59,7 @@ flowchart LR
 | `pgx` + 手寫 SQL | 不用 ORM。型別看得見、query 控制得住,效能問題查得出來 |
 | gRPC + `buf` | 服務間的契約寫在 `.proto`,兩端程式碼從同一份產生。buf 取代 protoc:設定寫在檔案裡而非一長串參數,還附帶 lint 與相容性檢查 |
 | `log/slog` | 標準庫的結構化日誌,不需要第三方 logger |
+| `prometheus/client_golang` | 指標是標準庫沒有的東西。用原生 client 而非 OpenTelemetry:少一層抽象與一個 collector 元件 |
 | 分三層 + interface 定義在使用端 | 領域層不知道 HTTP 也不知道 SQL,可以完全不碰資料庫做測試。見 [design.md](./docs/design.md) |
 
 ---
@@ -110,6 +111,7 @@ grpcurl -plaintext -d '{
 |---|---|---|
 | `GET` | `/healthz` | liveness:process 還活著 |
 | `GET` | `/readyz` | readiness:會實際 ping 資料庫 |
+| `GET` | `/metrics` | Prometheus 指標 |
 | `POST` | `/devices` | 註冊設備,**冪等** |
 | `GET` | `/devices` | 列出設備(`?limit=&offset=`) |
 | `GET` | `/devices/{serial}` | 取得單一設備 |
@@ -120,6 +122,9 @@ grpcurl -plaintext -d '{
 |---|---|
 | `device.v1.DeviceService/CheckEligibility` | 這台設備能不能上報 |
 | `telemetry.v1.TelemetryService/SubmitReadings` | 批次上報,逐筆回結果 |
+
+telemetry-service 對外只有 gRPC,但指標與探活走 HTTP,所以它另外開一個管理面
+(預設 `:8081`),上面有 `/metrics` 與 `/healthz`。
 
 ---
 
