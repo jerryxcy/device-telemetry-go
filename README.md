@@ -159,25 +159,18 @@ grpcurl -plaintext -d '{
 
 ```bash
 make up      # 起全部五個服務(第一次要 build,會等一下)
-make load    # 持續打流量 —— 沒有流量圖上就是空的
+make load    # 持續打流量 —— 沒有流量的話圖上就是一條平的零
 ```
 
-然後打開兩個網址:
+收工用 `make down`。資料會留著,下次 `make up` 還在;要清空是 `make reset`。
 
-| 網址 | 看什麼 |
-|---|---|
-| <http://localhost:3000> | **Grafana**,儀表板已經備好,免登入直接看 |
-| <http://localhost:9092> | **Prometheus**,`Status → Targets` 應該三個都是綠色的 `UP` |
+### Grafana:看圖
 
-圖上沒東西時,第一個該看的就是 Targets 那頁 —— 它會直接告訴你是抓不到還是沒資料。
+<http://localhost:3000/d/device-telemetry/device-telemetry>
 
-收工:
+免登入。也可以從 <http://localhost:3000> 進去,左側選單的 **Dashboards** 底下只有一張叫 **Device Telemetry**。
 
-```bash
-make down
-```
-
-### 儀表板上有什麼
+![Grafana 的 Device Telemetry 儀表板](./docs/images/grafana.png)
 
 六張圖,一半一半。
 
@@ -185,12 +178,27 @@ make down
 
 後三張是這個平台才有的:
 
-- **讀數處理結果** 與 **Duplicate 佔比** —— 冪等機制實際擋下多少重送。設備重試越積極這個數字越高,而這件事本來只能翻 log 才知道。
-- **跨服務這一跳** —— 同一個 `CheckEligibility`,在呼叫端與被呼叫端各量一次。兩條線的差距就是網路與排隊的成本,能分辨「下游慢」還是「中間慢」。
+- **讀數處理結果** 與 **Duplicate 佔比** —— 冪等機制實際擋下多少重送。截圖裡是 27.3%,因為 `make load` 會反覆送同一批讀數。設備重試越積極這個數字越高,而這件事本來只能翻 log 才知道。
+- **跨服務這一跳** —— 同一個 `CheckEligibility`,在呼叫端與被呼叫端各量一次。兩條線的差距就是網路與排隊的成本,能分辨「下游慢」還是「中間慢」。(本機跑的話兩條線會疊在一起 —— 延遲太低,落在同一個 histogram 桶裡。)
 
 `make load` 用的是現成的 smoke script,裡面本來就會刻意打出未註冊、已停用、時鐘跑掉這些案例,所以錯誤碼的分布和 duplicate 的比例自然就有東西看。
 
+### Prometheus:確認資料真的有進來
+
+<http://localhost:9092>,上方選單的 **Status → Target health**。
+
+![Prometheus 的 Target health 頁面](./docs/images/prometheus-targets.png)
+
+**Target** 就是「Prometheus 要去抓指標的一個位址」。這一頁列出它現在盯著的每一個,以及最近一次抓取的結果:
+
+- **`UP`** —— 上一次抓成功了。三個都該是 UP:`device-service`、`telemetry-service`,還有 Prometheus 自己(它也產生自己的指標)。
+- **`DOWN`** —— 抓不到,旁邊會直接寫原因(連線被拒、逾時、404)。
+- **Last scrape** —— 距離上次抓取多久。設定是每 5 秒一次,所以這個數字應該一直在 0~5 秒之間跳。
+
+**圖是空的時候,先看這一頁。**它能分辨兩種完全不同的狀況:target 是 `DOWN`(服務沒起來或位址寫錯),還是 target 是 `UP` 但圖仍然空的(抓得到,只是沒有流量 —— 那就去跑 `make load`)。
+
 指標清單、label 的設計、Prometheus 與 Grafana 的設定怎麼運作,見 [design.md 的可觀測性](./docs/design.md#七可觀測性)。
+
 
 ---
 
@@ -272,6 +280,7 @@ gen/                  由 proto/ 產生,不要手改(下次 make proto 會覆蓋
 migrations/           資料庫 schema,docker-compose 在首次啟動時執行
 scripts/              端到端 smoke test
 deploy/               Prometheus 設定與 Grafana 的 provisioning
+docs/images/          README 用的截圖
 docs/adr/             關鍵設計決策與它們的理由
 ```
 

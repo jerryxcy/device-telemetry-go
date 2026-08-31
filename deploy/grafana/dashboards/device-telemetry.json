@@ -121,13 +121,13 @@
       "id": 3,
       "type": "timeseries",
       "title": "gRPC 請求速率(依 method 與 code)",
-      "description": "code 不是 OK 的線就是失敗。兩個服務的 RPC 都在這裡。",
+      "description": "code 不是 OK 的線就是失敗。兩個服務的 RPC 都在這裡 —— 每個服務目前各只有一支 method,所以圖例只標服務與錯誤碼。",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 8,
+        "h": 9,
         "w": 12,
         "x": 0,
         "y": 8
@@ -140,7 +140,7 @@
           },
           "editorMode": "code",
           "expr": "sum by (service, method, code) (rate(grpc_server_requests_total[1m]))",
-          "legendFormat": "{{service}} {{method}} {{code}}",
+          "legendFormat": "{{service}} · {{code}}",
           "range": true,
           "refId": "A"
         }
@@ -178,7 +178,7 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 8,
+        "h": 9,
         "w": 12,
         "x": 12,
         "y": 8
@@ -243,7 +243,7 @@
         "h": 8,
         "w": 16,
         "x": 0,
-        "y": 16
+        "y": 17
       },
       "targets": [
         {
@@ -298,7 +298,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 16
+        "y": 17
       },
       "targets": [
         {
