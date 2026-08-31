@@ -2,16 +2,11 @@
 
 設備遙測平台 —— 以 Go 實作的微服務練習專案。
 
-溫度計、濕度計這類設備會定期把量到的數值傳回平台。**device-service** 管理設備的身分
-與啟用狀態,**telemetry-service** 收下這些數值(專案裡稱為 Reading),並在寫入前向
-device-service 確認這台設備有沒有資格上報。
+溫度計、濕度計這類設備會定期把量到的數值傳回平台。**device-service** 管理設備的身分與啟用狀態,**telemetry-service** 收下這些數值(專案裡稱為 Reading),並在寫入前向 device-service 確認這台設備有沒有資格上報。
 
-重點不在功能多寡,而在三件事:**服務間通訊**(HTTP 與 gRPC 各用在對的地方)、
-**錯誤處理**(哪些是答案、哪些是失敗),以及**重送情境下的寫入冪等性**
-(設備會重試,平台不能因此長出重複資料)。
+重點不在功能多寡,而在三件事:**服務間通訊**(HTTP 與 gRPC 各用在對的地方)、**錯誤處理**(哪些是答案、哪些是失敗),以及**重送情境下的寫入冪等性**(設備會重試,平台不能因此長出重複資料)。
 
-用到的東西幾乎都是標準庫,加上三個套件:`net/http`、`log/slog`、`pgx`、`grpc`、
-`prometheus/client_golang`。沒有 web 框架、沒有 ORM、沒有 DI 容器。
+能用標準庫的就用標準庫:路由是 `net/http`、日誌是 `log/slog`。第三方只有標準庫沒有的那幾樣 —— `pgx` 連資料庫、`grpc` 做服務間通訊、`prometheus/client_golang` 出指標。沒有 web 框架、沒有 ORM、沒有 DI 容器。
 
 ---
 
@@ -21,18 +16,23 @@ device-service 確認這台設備有沒有資格上報。
 flowchart LR
     admin["管理者<br/>curl / 後台"]
     dev["設備"]
+    human["你<br/>瀏覽器"]
 
     subgraph ds["device-service"]
         direction TB
-        dshttp["HTTP :8080<br/>五支 CRUD"]
+        dshttp["HTTP :8080<br/>五支 CRUD<br/>/healthz · /readyz · /metrics"]
         dsgrpc["gRPC :9090<br/>CheckEligibility"]
     end
 
     subgraph ts["telemetry-service"]
+        direction TB
         tsgrpc["gRPC :9091<br/>SubmitReadings"]
+        tsadmin["HTTP :8081 管理面<br/>/healthz · /metrics"]
     end
 
     pg[("PostgreSQL<br/>devices · readings")]
+    prom["Prometheus :9092"]
+    graf["Grafana :3000"]
 
     admin -->|HTTP / JSON| dshttp
     dev -->|gRPC| tsgrpc
@@ -40,16 +40,24 @@ flowchart LR
     dshttp --> pg
     dsgrpc --> pg
     tsgrpc --> pg
+
+    prom -.->|"每 5s 抓 /metrics"| dshttp
+    prom -.->|"每 5s 抓 /metrics"| tsadmin
+    human --> graf
+    graf -->|PromQL| prom
 ```
+
+虛線是**抓取**的方向。Prometheus 主動去拿,服務只是把數字放在 `/metrics` 上等人來拿 —— 它們完全不知道 Prometheus 存在。
 
 | 元件 | 負責什麼 |
 |---|---|
 | **device-service** | 設備的 CRUD(對人開 HTTP)、回答「這台能不能上報」(對服務開 gRPC) |
 | **telemetry-service** | 收下設備上報的 Reading,寫入前先問 device-service |
 | **PostgreSQL** | 兩張表:`devices` 與 `readings` |
+| **Prometheus** | 每 5 秒去兩個服務的 `/metrics` 抓一次,存成時序資料 |
+| **Grafana** | 用 PromQL 查 Prometheus,畫成儀表板 |
 
-對人的介面用 HTTP、服務之間用 gRPC。為什麼這樣分、每個服務內部怎麼分層,見
-[docs/design.md](./docs/design.md)。
+對人的介面用 HTTP、服務之間用 gRPC。為什麼這樣分、每個服務內部怎麼分層,見 [docs/design.md](./docs/design.md)。
 
 ### 技術選擇
 
@@ -68,7 +76,7 @@ flowchart LR
 
 需要 **Go 1.26+** 與 **Docker**。
 
-兩個服務各開一個終端機(`run-*` 會自己先把資料庫起來):
+想看監控就直接跳到[監控](#監控),`make up` 一行把全部起起來。以下是開發時的跑法 —— 兩個服務各開一個終端機(`run-*` 會自己先把資料庫起來):
 
 ```bash
 make run-device      # HTTP :8080 / gRPC :9090
@@ -107,69 +115,82 @@ grpcurl -plaintext -d '{
 
 ### API
 
+#### device-service
+
+**HTTP `:8080`** —— 對人的介面。
+
 | Method | Path | 說明 |
 |---|---|---|
-| `GET` | `/healthz` | liveness:process 還活著 |
-| `GET` | `/readyz` | readiness:會實際 ping 資料庫 |
-| `GET` | `/metrics` | Prometheus 指標 |
 | `POST` | `/devices` | 註冊設備,**冪等** |
 | `GET` | `/devices` | 列出設備(`?limit=&offset=`) |
 | `GET` | `/devices/{serial}` | 取得單一設備 |
 | `PUT` | `/devices/{serial}` | 更新 `name` / `location` / `enabled` |
 | `DELETE` | `/devices/{serial}` | 刪除設備與其讀數,**冪等** |
+| `GET` | `/healthz` | liveness:process 還活著 |
+| `GET` | `/readyz` | readiness:會實際 ping 資料庫 |
+| `GET` | `/metrics` | Prometheus 指標 |
 
-| gRPC method | 說明 |
+**gRPC `:9090`** —— 對服務的介面。
+
+| Method | 說明 |
 |---|---|
 | `device.v1.DeviceService/CheckEligibility` | 這台設備能不能上報 |
+
+#### telemetry-service
+
+**gRPC `:9091`** —— 設備上報的入口,也是這個服務唯一的業務介面。
+
+| Method | 說明 |
+|---|---|
 | `telemetry.v1.TelemetryService/SubmitReadings` | 批次上報,逐筆回結果 |
 
-telemetry-service 對外只有 gRPC,但指標與探活走 HTTP,所以它另外開一個管理面
-(預設 `:8081`),上面有 `/metrics` 與 `/healthz`。
+**HTTP `:8081`** —— 管理面。指標與探活走 HTTP,所以純 gRPC 的服務仍然要開一個 HTTP port,這是常態而不是將就。
+
+| Method | Path | 說明 |
+|---|---|---|
+| `GET` | `/healthz` | liveness:process 還活著 |
+| `GET` | `/metrics` | Prometheus 指標 |
 
 ---
 
 ## 監控
 
+兩個指令,各開一個終端機:
+
 ```bash
-make up     # 用容器起全部五個:postgres、兩個服務、Prometheus、Grafana
-make load   # 持續打流量,圖上才有東西(Ctrl-C 停)
-make down   # 收工
+make up      # 起全部五個服務(第一次要 build,會等一下)
+make load    # 持續打流量 —— 沒有流量圖上就是空的
 ```
 
-Grafana 在 <http://localhost:3000>,dashboard 已經 provisioning 好,直接看。
-Prometheus 在 <http://localhost:9092>,**Status → Targets** 看得到抓取狀態。
+然後打開兩個網址:
 
-Prometheus 用 `static_configs` 把兩個 target 寫死在
-[deploy/prometheus.yml](./deploy/prometheus.yml) —— 這跟 k8s 沒有關係。
-k8s 換掉的只是 target 從哪裡發現(service discovery),抓取方式、指標模型
-與查詢語言完全一樣。
+| 網址 | 看什麼 |
+|---|---|
+| <http://localhost:3000> | **Grafana**,儀表板已經備好,免登入直接看 |
+| <http://localhost:9092> | **Prometheus**,`Status → Targets` 應該三個都是綠色的 `UP` |
 
-Grafana 的 datasource 與 dashboard 都是檔案,在 [deploy/grafana/](./deploy/grafana/)。
-手點出來的設定不會進版控,換一台機器就沒了。
+圖上沒東西時,第一個該看的就是 Targets 那頁 —— 它會直接告訴你是抓不到還是沒資料。
 
-### 指標
+收工:
 
-| 名稱 | 型別 | Labels |
-|---|---|---|
-| `http_requests_total` | Counter | `method`, `route`, `status` |
-| `http_request_duration_seconds` | Histogram | `method`, `route` |
-| `grpc_server_requests_total` | Counter | `method`, `code` |
-| `grpc_server_request_duration_seconds` | Histogram | `method` |
-| `grpc_client_requests_total` | Counter | `method`, `code` |
-| `grpc_client_request_duration_seconds` | Histogram | `method` |
-| `telemetry_readings_total` | Counter | `status` |
+```bash
+make down
+```
 
-前六個是通用的 RED 指標。真正屬於這個平台的是最後一個與 client 那一組:
+### 儀表板上有什麼
 
-- **`telemetry_readings_total{status="duplicate"}`** —— 冪等機制實際擋下多少重送。
-  設備重試越積極這個比例越高,而這件事本來只能翻 log 才知道。
-- **client 與 server 各量一次同一個 RPC** —— telemetry-service 量到的耗時含網路
-  與排隊,device-service 量到的只有它自己處理的時間。兩條線的差距,就是
-  「下游慢」與「中間慢」的分界。
+六張圖,一半一半。
 
-`route` 用的是路由樣板(`/devices/{serial}`)而不是實際路徑。用實際路徑的話,
-每台設備都會長出自己的 time series —— 設備一多就是 cardinality 爆炸,而且是
-安靜地爆。
+前三張是任何服務都該有的 RED 指標:HTTP 請求速率、HTTP p95 延遲、gRPC 請求速率(依錯誤碼分)。
+
+後三張是這個平台才有的:
+
+- **讀數處理結果** 與 **Duplicate 佔比** —— 冪等機制實際擋下多少重送。設備重試越積極這個數字越高,而這件事本來只能翻 log 才知道。
+- **跨服務這一跳** —— 同一個 `CheckEligibility`,在呼叫端與被呼叫端各量一次。兩條線的差距就是網路與排隊的成本,能分辨「下游慢」還是「中間慢」。
+
+`make load` 用的是現成的 smoke script,裡面本來就會刻意打出未註冊、已停用、時鐘跑掉這些案例,所以錯誤碼的分布和 duplicate 的比例自然就有東西看。
+
+指標清單、label 的設計、Prometheus 與 Grafana 的設定怎麼運作,見 [design.md 的可觀測性](./docs/design.md#七可觀測性)。
 
 ---
 
@@ -179,14 +200,24 @@ Grafana 的 datasource 與 dashboard 都是檔案,在 [deploy/grafana/](./deploy
 
 | 指令 | 做什麼 |
 |---|---|
-| `make up` / `make down` | 用容器起 / 關全部五個服務 |
-| `make db` | 只起 PostgreSQL,給 `make run-*` 用 |
-| `make run-device` / `make run-telemetry` | 本機跑兩個服務(各開一個終端機) |
+| `make up` / `make down` | 用容器起 / 關全部五個服務(兩個服務、PostgreSQL、Prometheus、Grafana) |
+| `make db` | 只起 PostgreSQL —— `make run-*` 會自己先跑這個 |
+| `make run-device` / `make run-telemetry` | 在本機用 `go run` 跑服務(各開一個終端機) |
+| `make load` | 持續打流量餵儀表板 |
 | `make test` | 單元測試(不需要資料庫,約兩秒) |
 | `make test-int` | 整合測試(testcontainers 自己起資料庫) |
 | `make lint` | `go vet` + `gofmt` 檢查 |
 | `make db-reset` | 砍掉 DB volume 重建(改了 `migrations/` 之後要跑) |
 | `make proto` | 改了 `.proto` 之後重新產生 Go 程式碼 |
+
+### 兩種跑法,不能同時用
+
+| | 服務跑在哪 | 適合 |
+|---|---|---|
+| `make run-device` / `make run-telemetry` | 本機(`go run`) | 寫程式。改完 Ctrl-C 再跑,幾秒鐘的事 |
+| `make up` | 容器 | 看監控。Prometheus 在容器網路裡才找得到服務 |
+
+兩者都會佔用 8080 / 9090 / 9091,同時起會撞 port。
 
 ### 四種測試,各自抓不同的東西
 
@@ -194,17 +225,15 @@ Grafana 的 datasource 與 dashboard 都是檔案,在 [deploy/grafana/](./deploy
 |---|---|---|---|
 | 單元 | `make test` | 無 | 業務邏輯。用假的 Repository,完全不碰資料庫 |
 | 整合 | `make test-int` | Docker | SQL 本身:欄位順序、錯誤碼轉換、交易語意 |
-| smoke | `make smoke-device-http` | 服務在跑 | HTTP 整條鏈 |
-| smoke | `make smoke-device-grpc` | + `grpcurl` | gRPC 整條鏈 |
-| smoke | `make smoke-telemetry-grpc` | 兩個服務都在跑 | 跨服務的上報流程 |
+| smoke | `make smoke-device-http` | device-service | HTTP 整條鏈 |
+| smoke | `make smoke-device-grpc` | device-service + `grpcurl` | gRPC 整條鏈 |
+| smoke | `make smoke-telemetry-grpc` | 兩個服務 + `grpcurl` | 跨服務的上報流程 |
 
-三支 smoke test 會自己斷言結果,全過 `exit 0`、任一項失敗 `exit 1`,而且只碰自己建立的
-測試資料。裡面每個呼叫上方都附了**可以直接複製執行的 `curl` / `grpcurl`**,想手動
-重現某一項時很方便。
+三支 smoke test 會自己斷言結果,全過 `exit 0`、任一項失敗 `exit 1`,而且只碰自己建立的測試資料。裡面每個呼叫上方都附了**可以直接複製執行的 `curl` / `grpcurl`**,想手動重現某一項時很方便。
 
-整合測試靠 [testcontainers](https://golang.testcontainers.org/) 起一個乾淨的 PostgreSQL,
-並且**用 `migrations/001_init.sql` 建 schema** —— 所以它同時也是 migration 的回歸測試。
-想改成對著 `make db` 起來的資料庫跑(快一點)就設 `DATABASE_URL`。
+服務沒起來時它們會直接 `exit 2` 並告訴你該跑哪個指令,不會跑完整套再噴一整面紅字 —— 那樣真正的原因會被埋在裡面。
+
+整合測試靠 [testcontainers](https://golang.testcontainers.org/) 起一個乾淨的 PostgreSQL,並且**用 `migrations/001_init.sql` 建 schema** —— 所以它同時也是 migration 的回歸測試。想改成對著 `make db` 起來的資料庫跑(快一點)就設 `DATABASE_URL`。
 
 ### 改 `.proto` 才需要的工具
 
@@ -216,8 +245,7 @@ go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 ```
 
-改完跑 `make proto`。送出前用 `make proto-breaking` 確認沒有破壞相容性 ——
-`.proto` 的**欄位編號**才是線上格式的識別碼,改欄位名是安全的,重用編號不是。
+改完跑 `make proto`。送出前用 `make proto-breaking` 確認沒有破壞相容性 —— `.proto` 的**欄位編號**才是線上格式的識別碼,改欄位名是安全的,重用編號不是。
 
 ---
 
