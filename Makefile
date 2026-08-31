@@ -25,8 +25,13 @@ db: ## 只起 postgres,給 run-device / run-telemetry 當後盾
 down: ## 關掉所有容器(up 與 db 都用這個收工)
 	docker compose down
 
-db-reset: ## 砍掉 DB volume 重建(改了 migrations 之後要跑)
-	docker compose down -v && docker compose up -d postgres
+db-reset: ## 只砍掉 DB volume 重建(改了 migrations 之後要跑)
+	docker compose down
+	@# 只刪 pgdata。用 down -v 的話會連 Prometheus 的歷史與 Grafana 的
+	@# 狀態一起砍掉 —— 那跟「重建資料庫」是兩回事。
+	docker volume rm -f "$$(docker compose config --format json | \
+		python3 -c 'import sys,json; print(json.load(sys.stdin)["name"])')_pgdata"
+	docker compose up -d postgres
 
 run-device: db ## 本機跑 device-service(HTTP :8080 / gRPC :9090)
 	DATABASE_URL="$(DB_URL)" go run ./cmd/device-service
@@ -35,6 +40,10 @@ run-telemetry: db ## 本機跑 telemetry-service(gRPC :9091,需要 device-servic
 	DATABASE_URL="$(DB_URL)" go run ./cmd/telemetry-service
 
 load: ## 持續打流量餵儀表板(Ctrl-C 停),需要 make up 先跑起來
+	@# 先各跑一次而且不吃掉輸出:服務沒起來、少裝 grpcurl 這些,
+	@# 要在這裡就講清楚。進迴圈之後才靜音,否則畫面會被洗版。
+	@./scripts/smoke-device-http.sh >/dev/null
+	@./scripts/smoke-telemetry-grpc.sh >/dev/null
 	@echo "持續打流量,Ctrl-C 停止…"
 	@while true; do \
 		./scripts/smoke-device-http.sh >/dev/null 2>&1 || true; \

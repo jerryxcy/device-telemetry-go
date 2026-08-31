@@ -94,6 +94,73 @@ func TestHTTPLabels(t *testing.T) {
 // TestMetricsPathIsNotCounted 確認 scrape 自己不會被算進去。
 //
 // 沒有這個,每 5 秒一次的抓取會持續墊高請求數,把真實流量的圖洗掉。
+// TestHTTPMethodIsBounded 確認 method label 有上界。
+//
+// r.Method 是客戶端說了算的,不收斂的話遠端可以用亂編的動詞替我們
+// 無限生 series —— 跟 route 用實際路徑是同一種問題。
+func TestHTTPMethodIsBounded(t *testing.T) {
+	m := New()
+	mux := newTestMux()
+
+	for _, verb := range []string{"FOO", "BAR", "BAZ", "QUUX"} {
+		serve(m, mux, verb, "/devices")
+	}
+
+	if got := testutil.ToFloat64(m.httpRequests.WithLabelValues("other", routeUnmatched, "405")); got != 4 {
+		t.Errorf("method=other count = %v, want 4", got)
+	}
+	if n := testutil.CollectAndCount(m.httpRequests); n != 1 {
+		t.Errorf("http_requests_total series count = %d, want 1 —— 亂編的動詞長出了自己的 series", n)
+	}
+
+	// 已知的動詞仍然要保留原樣,不能被一起收斂掉。
+	serve(m, mux, http.MethodGet, "/devices")
+	if got := testutil.ToFloat64(m.httpRequests.WithLabelValues("GET", "/devices", "200")); got != 1 {
+		t.Errorf("method=GET count = %v, want 1", got)
+	}
+}
+
+// TestPanickingHandlerIsStillCounted 確認 handler panic 的請求不會從指標上消失。
+//
+// panic 正是最需要被看見的情況。沒有 defer 的話它連數量都不會留下。
+func TestPanickingHandlerIsStillCounted(t *testing.T) {
+	m := New()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /boom", func(w http.ResponseWriter, r *http.Request) {
+		panic("boom")
+	})
+
+	func() {
+		defer func() { _ = recover() }() // 攔住 panic,測試本身不能掛掉
+		serve(m, mux, http.MethodGet, "/boom")
+	}()
+
+	if got := testutil.ToFloat64(m.httpRequests.WithLabelValues("GET", "/boom", "500")); got != 1 {
+		t.Errorf("panic 的請求 count = %v, want 1(status 應記成 500)", got)
+	}
+	if n := testutil.CollectAndCount(m.httpDuration); n != 1 {
+		t.Errorf("http_request_duration_seconds series count = %d, want 1", n)
+	}
+}
+
+// TestPanickingGRPCHandlerIsStillCounted 同上,gRPC 版。
+func TestPanickingGRPCHandlerIsStillCounted(t *testing.T) {
+	const method = "/telemetry.v1.TelemetryService/SubmitReadings"
+
+	m := New()
+	info := &grpc.UnaryServerInfo{FullMethod: method}
+	panicking := func(ctx context.Context, req any) (any, error) { panic("boom") }
+
+	func() {
+		defer func() { _ = recover() }()
+		_, _ = m.UnaryServerInterceptor(context.Background(), nil, info, panicking)
+	}()
+
+	if got := testutil.ToFloat64(m.grpcServerRequests.WithLabelValues(method, "Internal")); got != 1 {
+		t.Errorf("panic 的 RPC count = %v, want 1(code 應記成 Internal)", got)
+	}
+}
+
 func TestMetricsPathIsNotCounted(t *testing.T) {
 	m := New()
 	mux := http.NewServeMux()

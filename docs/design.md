@@ -26,6 +26,8 @@ telemetry-service **同時是 server 也是 client** —— 對設備是 server,
 
 device-service 因此**同時開兩個 server**,但業務邏輯只有一份:`internal/device` 那一層不知道自己是被 HTTP 還是 gRPC 呼叫的。加一種協定不必動到它。
 
+這條分界只適用於**業務介面**。指標與探活走的是 HTTP —— Prometheus 是服務,但它抓 `/metrics` 用的是 HTTP,而不是 gRPC。理由跟對人開 HTTP 一樣:那是這類工具的通用語言,換成 gRPC 只會讓所有現成的東西都用不了。telemetry-service 沒有業務用的 HTTP 介面,仍然要為此開一個管理面。
+
 ### 為什麼共用一個資料庫
 
 「一個服務一個資料庫」是微服務的常見預設,這裡刻意沒有這樣做。

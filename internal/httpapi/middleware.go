@@ -52,6 +52,12 @@ func RequestIDFrom(ctx context.Context) string {
 // 沒有任何方法可以讀回 handler 送出的 status code。
 func Logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Prometheus 每 5 秒抓一次 /metrics,那些不是值得記錄的請求。
+		if r.URL.Path == metricsPath {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		start := time.Now()
 
 		// handler 只呼叫 Write 而不呼叫 WriteHeader 時,net/http 會隱含補一個 200

@@ -57,7 +57,7 @@ flowchart LR
 | **Prometheus** | 每 5 秒去兩個服務的 `/metrics` 抓一次,存成時序資料 |
 | **Grafana** | 用 PromQL 查 Prometheus,畫成儀表板 |
 
-對人的介面用 HTTP、服務之間用 gRPC。為什麼這樣分、每個服務內部怎麼分層,見 [docs/design.md](./docs/design.md)。
+為什麼業務介面這樣分、每個服務內部怎麼分層,見 [docs/design.md](./docs/design.md)。
 
 ### 技術選擇
 
@@ -117,7 +117,7 @@ grpcurl -plaintext -d '{
 
 #### device-service
 
-**HTTP `:8080`** —— 對人的介面。
+**HTTP `:8080`** —— 設備管理的 CRUD(人用 `curl` 或後台打),加上探活與指標。
 
 | Method | Path | 說明 |
 |---|---|---|
@@ -130,7 +130,7 @@ grpcurl -plaintext -d '{
 | `GET` | `/readyz` | readiness:會實際 ping 資料庫 |
 | `GET` | `/metrics` | Prometheus 指標 |
 
-**gRPC `:9090`** —— 對服務的介面。
+**gRPC `:9090`** —— 只有一支,給 telemetry-service 在寫入前查資格用。
 
 | Method | 說明 |
 |---|---|

@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
@@ -139,12 +140,41 @@ func (m *Metrics) HTTPMiddleware(next http.Handler) http.Handler {
 
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
 
-		route := routeLabel(r.Pattern)
-		m.httpRequests.WithLabelValues(r.Method, route, strconv.Itoa(rec.status)).Inc()
-		m.httpDuration.WithLabelValues(r.Method, route).Observe(time.Since(start).Seconds())
+		// 用 defer 記錄,handler panic 時這筆才不會整個消失 ——
+		// panic 正是最需要被看見的情況。completed 用來分辨這兩條路:
+		// 沒有走到最後一行就代表在展開 panic,狀態記成 500。
+		completed := false
+		defer func() {
+			status := rec.status
+			if !completed {
+				status = http.StatusInternalServerError
+			}
+			route := routeLabel(r.Pattern)
+			method := methodLabel(r.Method)
+			m.httpRequests.WithLabelValues(method, route, strconv.Itoa(status)).Inc()
+			m.httpDuration.WithLabelValues(method, route).Observe(time.Since(start).Seconds())
+		}()
+
+		next.ServeHTTP(rec, r)
+		completed = true
 	})
+}
+
+// methodLabel 把 HTTP method 收斂到已知的集合。
+//
+// r.Method 是客戶端送什麼就是什麼 —— net/http 接受任何合法的 token,
+// 所以不收斂的話,遠端用亂編的動詞打幾次就能替我們生出幾條新的 series。
+// 這跟 route 用實際路徑是同一種 cardinality 問題,只是入口不同。
+func methodLabel(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
+		http.MethodPatch, http.MethodDelete, http.MethodConnect,
+		http.MethodOptions, http.MethodTrace:
+		return method
+	default:
+		return "other"
+	}
 }
 
 // routeLabel 把 ServeMux 的樣板整理成 label 值。
@@ -187,11 +217,18 @@ func (m *Metrics) UnaryServerInterceptor(
 	handler grpc.UnaryHandler,
 ) (any, error) {
 	start := time.Now()
-	resp, err := handler(ctx, req)
 
+	// handler panic 時 code 就停在這個初始值 —— 跟 HTTP 那邊一樣,
+	// 不能讓 panic 的請求從指標上消失。
+	code := codes.Internal.String()
+	defer func() {
+		m.grpcServerRequests.WithLabelValues(info.FullMethod, code).Inc()
+		m.grpcServerDuration.WithLabelValues(info.FullMethod).Observe(time.Since(start).Seconds())
+	}()
+
+	resp, err := handler(ctx, req)
 	// status.Code(nil) 是 codes.OK,成功的呼叫不需要另外分支。
-	m.grpcServerRequests.WithLabelValues(info.FullMethod, status.Code(err).String()).Inc()
-	m.grpcServerDuration.WithLabelValues(info.FullMethod).Observe(time.Since(start).Seconds())
+	code = status.Code(err).String()
 
 	return resp, err
 }
@@ -209,10 +246,15 @@ func (m *Metrics) UnaryClientInterceptor(
 	opts ...grpc.CallOption,
 ) error {
 	start := time.Now()
-	err := invoker(ctx, method, req, reply, cc, opts...)
 
-	m.grpcClientRequests.WithLabelValues(method, status.Code(err).String()).Inc()
-	m.grpcClientDuration.WithLabelValues(method).Observe(time.Since(start).Seconds())
+	code := codes.Internal.String()
+	defer func() {
+		m.grpcClientRequests.WithLabelValues(method, code).Inc()
+		m.grpcClientDuration.WithLabelValues(method).Observe(time.Since(start).Seconds())
+	}()
+
+	err := invoker(ctx, method, req, reply, cc, opts...)
+	code = status.Code(err).String()
 
 	return err
 }

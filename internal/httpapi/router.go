@@ -8,6 +8,11 @@ import (
 	"github.com/jerryxcy/device-telemetry-go/internal/device"
 )
 
+// metricsPath 上的請求不記 log。每 5 秒一次的 scrape 不值得產生一行,
+// 那只會把真正的請求洗掉。telemetry-service 的管理面基於同樣的理由,
+// 整個就不掛 RequestID 與 Logging。
+const metricsPath = "/metrics"
+
 // Pinger 讓 /readyz 可以確認 DB 真的活著,而不是只回 200。
 type Pinger interface {
 	Ping(ctx context.Context) error
@@ -41,7 +46,7 @@ func (h *Handler) Routes() http.Handler {
 
 	mux.HandleFunc("GET /healthz", h.healthz)
 	mux.HandleFunc("GET /readyz", h.readyz)
-	mux.Handle("GET /metrics", h.metrics.Handler())
+	mux.Handle("GET "+metricsPath, h.metrics.Handler())
 
 	mux.HandleFunc("POST /devices", h.registerDevice)
 	mux.HandleFunc("GET /devices", h.listDevices)
