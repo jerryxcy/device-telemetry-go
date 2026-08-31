@@ -29,6 +29,15 @@ if ! command -v jq >/dev/null; then
 	exit 2
 fi
 
+# 先確認服務在。少了這一關,服務沒起來時會跑完全部斷言再噴一整面紅字,
+# 真正的原因反而看不出來。
+curl -sS -o /dev/null --max-time 3 "$BASE/healthz" 2>/dev/null || {
+	echo "連不上 device-service($BASE)。先起服務:" >&2
+	echo "  make up          用容器起全部" >&2
+	echo "  make run-device  只在本機跑這一個" >&2
+	exit 2
+}
+
 # ---------------------------------------------------------------- 輔助函式
 
 # req METHOD PATH [JSON]  → 設定 $STATUS 與 $BODY

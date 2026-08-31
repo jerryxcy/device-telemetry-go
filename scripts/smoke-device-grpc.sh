@@ -37,6 +37,15 @@ for t in grpcurl jq curl; do
 	}
 done
 
+# 先確認服務在。少了這一關,服務沒起來時會跑完全部斷言再噴一整面紅字,
+# 真正的原因反而看不出來。
+grpcurl -plaintext "$GRPC" list >/dev/null 2>&1 || {
+	echo "連不上 device-service 的 gRPC($GRPC)。先起服務:" >&2
+	echo "  make up          用容器起全部" >&2
+	echo "  make run-device  只在本機跑這一個" >&2
+	exit 2
+}
+
 # ---------------------------------------------------------------- 輔助函式
 
 # grpc JSON → 設定 $CODE(OK 或 gRPC 錯誤碼)與 $BODY

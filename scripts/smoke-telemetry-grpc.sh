@@ -93,13 +93,16 @@ section() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 for pair in "$BASE/healthz|device-service HTTP" ; do
 	url=${pair%%|*}
 	curl -sS -o /dev/null --max-time 3 "$url" 2>/dev/null || {
-		echo "連不上 ${pair##*|}($url):make run-device 起來了嗎?" >&2
+		echo "連不上 ${pair##*|}($url)。先起服務:" >&2
+		echo "  make up          用容器起全部" >&2
+		echo "  make run-device  只在本機跑這一個" >&2
 		exit 2
 	}
 done
 grpcurl -plaintext "$TELEMETRY_GRPC" list >/dev/null 2>&1 || {
-	echo "連不上 telemetry-service($TELEMETRY_GRPC):" >&2
-	echo "  make run-telemetry" >&2
+	echo "連不上 telemetry-service($TELEMETRY_GRPC)。先起服務:" >&2
+	echo "  make up             用容器起全部" >&2
+	echo "  make run-telemetry  只在本機跑這一個" >&2
 	exit 2
 }
 
