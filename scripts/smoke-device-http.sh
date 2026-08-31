@@ -118,9 +118,27 @@ check "serial 正確" SMOKE-0001 "$(jq -r .serial <<<"$BODY")"
 # curl -s localhost:8080/devices | jq
 req GET /devices
 check "列表回 200" 200 "$STATUS"
-check "列表含 SMOKE-0001" 1 "$(jq '[.[] | select(.serial=="SMOKE-0001")] | length' <<<"$BODY")"
 check "依 serial 排序" sorted \
 	"$(jq -r 'if (map(.serial) | sort) == map(.serial) then "sorted" else "unsorted" end' <<<"$BODY")"
+
+# curl -s 'localhost:8080/devices?limit=200&offset=0' | jq
+#
+# 分頁找,不假設 SMOKE-0001 落在第一頁。列表依 serial 排序,資料庫裡只要
+# 有夠多排在 S 前面的設備(例如壓測留下的 BULK-*),第一頁就看不到它 ——
+# 這條斷言本來會因此失敗,而失敗的原因跟被測的行為無關。
+FOUND=0
+OFFSET=0
+while :; do
+	req GET "/devices?limit=200&offset=$OFFSET"
+	if [ "$(jq '[.[] | select(.serial=="SMOKE-0001")] | length' <<<"$BODY")" -eq 1 ]; then
+		FOUND=1
+		break
+	fi
+	# 回傳不足一整頁就代表翻到底了。
+	[ "$(jq length <<<"$BODY")" -lt 200 ] && break
+	OFFSET=$((OFFSET + 200))
+done
+check "列表(翻頁)含 SMOKE-0001" 1 "$FOUND"
 
 # curl -s 'localhost:8080/devices?limit=1' | jq
 req GET '/devices?limit=1'
