@@ -34,8 +34,9 @@ _Avoid_: Enrollment, Onboarding, Provisioning
 _Avoid_: Active/Inactive, Status, Lifecycle, Retired
 
 **Liveness**:
-觀測狀態。表示平台最近是否還聽得到這台設備,由最後一次 Reading 推導而來,不可由
-人設定。與 Enabled 無關:一台 Enabled 的設備完全可能失聯。
+觀測狀態。表示平台最近是否還聽得到這台設備,由最後一筆 Reading 的 Received At 推導
+而來 —— 量的是平台到設備這條路通不通,不是設備本身有沒有在運作。不可由人設定,
+與 Enabled 無關:一台 Enabled 的設備完全可能失聯。
 _Avoid_: Status, State, Active, Online flag
 
 ### 讀數
