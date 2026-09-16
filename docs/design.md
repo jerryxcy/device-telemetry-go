@@ -22,7 +22,7 @@ telemetry-service **同時是 server 也是 client** —— 對設備是 server,
 
 **對人的介面用 HTTP。**瀏覽器、`curl`、後台都能直接打,不需要任何額外工具,錯誤訊息也是人看得懂的 JSON。管理設備就是人在做的事。
 
-**服務之間用 gRPC。**契約寫在 `.proto` 裡,兩端的程式碼從同一份產生 —— 欄位對不上在**編譯期**就會發現,不必等到執行時才在 log 裡看到解析失敗。批次上報的訊息也比 JSON 小得多。設備上報也走 gRPC,但那條的前提與邊界不同,見 [ADR-0004](./adr/0004-grpc-ingest-assumes-gateway.md)。
+**服務之間用 gRPC。**契約寫在 `.proto` 裡,兩端的程式碼從同一份產生 —— 欄位對不上在**編譯期**就會發現,不必等到執行時才在 log 裡看到解析失敗。批次上報的訊息也比 JSON 小得多。設備上報也走 gRPC,但那條的前提與邊界不同,見 [ADR-0004](./adr/0004-grpc-ingest-for-synchronous-feedback.md)。
 
 device-service 因此**同時開兩個 server**,但業務邏輯只有一份:`internal/device` 那一層不知道自己是被 HTTP 還是 gRPC 呼叫的。加一種協定不必動到它。
 
